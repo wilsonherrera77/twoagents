@@ -1,0 +1,8 @@
+{
+  "next_message_id": 23,
+  "yes_all_policy": {
+    "claude-a": true,
+    "claude-b": true
+  },
+  "last_save": "2025-09-01T21:43:32.797796Z"
+}

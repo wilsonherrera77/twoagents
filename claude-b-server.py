@@ -14,6 +14,7 @@ import webbrowser
 import urllib.request
 import threading
 import time
+import random
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
@@ -257,6 +258,7 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.forward_to_claude_a_http(message)
         except Exception as e:
             print(f"HTTP forward to Claude-A failed: {e}")
+            write_project_log('claude-b', 'warn', f'HTTP forward to A failed: {e}')
         
         return {'success': True, 'message_id': message['id']}
     
@@ -293,7 +295,7 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         }
     
     def write_message_to_claude_a(self, message):
-        """Write message for Claude-A to read"""
+        """Write message for Claude-A to read with atomic write"""
         try:
             MESSAGE_DIR.mkdir(exist_ok=True)
             message_file = MESSAGE_DIR / 'from_claude-b.txt'
@@ -313,8 +315,11 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 {message['content']}
 """
             
-            with open(message_file, 'w', encoding='utf-8') as f:
+            # Atomic write: write to temp file, then rename
+            temp_file = message_file.with_suffix('.tmp')
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(formatted_message)
+            temp_file.replace(message_file)
 
             print(f"Message written to {message_file}")
             write_project_log('claude-b', 'debug', f'message file written: {message_file}')
@@ -354,8 +359,21 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 - Implement according to specifications
 - Report back with results
 
-Starting implementation now..."""
-            
+Starting implementation now...
+
+[RATIONALE]:
+- Prioritize streaming and basic contracts; de-risk large file handling first.
+- Iterate with small bundles to allow quick review and approvals.
+
+[DECISION]: yes (proceed with initial implementation)
+"""
+
+            # Human-like small delay before responding
+            try:
+                time.sleep(random.uniform(0.8, 2.0))
+            except Exception:
+                pass
+
             # Auto-respond to Claude-A
             self.auto_respond_to_claude_a(response_content, 'code')
             write_project_log('claude-b', 'info', 'auto-responded to plan from A')
@@ -407,7 +425,15 @@ Starting implementation now..."""
     
     def log_message(self, format, *args):
         """Custom logging for Claude-B"""
-        print(f"CLAUDE-B {self.address_string()} - {format % args}")
+        msg = format % args
+        # Reduce noise for frequent benign GETs
+        try:
+            if msg.startswith('"GET ') and (' 200 ' in msg or ' 304 ' in msg):
+                if any(p in msg for p in ('/api/status', '/api/logs', '/messages/', '/favicon.ico')):
+                    return
+        except Exception:
+            pass
+        print(f"CLAUDE-B {self.address_string()} - {msg}")
 
     def log_error(self, format, *args):
         """Reduce noise from client-abort errors in logs"""
@@ -416,6 +442,26 @@ Starting implementation now..."""
             print(f"CLAUDE-B WARN - {msg}")
         else:
             print(f"CLAUDE-B ERROR - {msg}")
+    
+    def forward_to_claude_a_http(self, message):
+        """POST message to Claude-A server /api/send_message"""
+        payload = {
+            'sender': 'claude-b',
+            'recipient': 'claude-a',
+            'role': message.get('role', 'implementer'),
+            'intent': message.get('intent', 'code'),
+            'last_seen': self.get_last_claude_a_timestamp(),
+            'content': message.get('content', '')
+        }
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            url='http://localhost:8080/api/send_message',
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.read()
 
 
 class QuietThreadingTCPServer(socketserver.ThreadingTCPServer):
@@ -476,25 +522,6 @@ class QuietThreadingTCPServer(socketserver.ThreadingTCPServer):
             # Never raise from finish
             print(f"finish error: {e}")
 
-    def forward_to_claude_a_http(self, message):
-        """POST message to Claude-A server /api/send_message"""
-        payload = {
-            'sender': 'claude-b',
-            'recipient': 'claude-a',
-            'role': message.get('role', 'implementer'),
-            'intent': message.get('intent', 'code'),
-            'last_seen': 'none',
-            'content': message.get('content', '')
-        }
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(
-            url='http://localhost:8080/api/send_message',
-            data=data,
-            headers={'Content-Type': 'application/json'},
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            _ = resp.read()
 
 def start_message_watcher():
     """Watch for messages from Claude-A"""

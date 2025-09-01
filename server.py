@@ -13,8 +13,11 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import unicodedata
+import time
+import random
+import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Server configuration
 PORT = 8080
@@ -27,12 +30,30 @@ LOG_FILE = LOG_DIR / 'project.log'
 def write_project_log(component: str, level: str, message: str):
     try:
         LOG_DIR.mkdir(exist_ok=True)
-        ts = datetime.utcnow().isoformat() + 'Z'
+        ts = datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
         line = f"{ts} [{component.upper()}][{level.upper()}] {message}\n"
         with open(LOG_FILE, 'a', encoding='utf-8', errors='replace') as lf:
             lf.write(line)
-    except Exception as _:
+    except Exception:
         # Never fail main flow due to logging
+        pass
+
+def append_conversation(message: dict):
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        ts = message.get('timestamp') or datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+        sender = message.get('sender','?')
+        recipient = message.get('recipient','?')
+        role = message.get('role','?')
+        intent = message.get('intent','?')
+        mid = message.get('id', '?')
+        content = (message.get('content','') or '')
+        snippet = content if len(content) <= 400 else (content[:397] + '...')
+        line = f"{ts} [CONV#{mid}] {sender}({role})->{recipient} [{intent}]\n{snippet}\n\n"
+        with open(LOG_DIR / 'conversation.md', 'a', encoding='utf-8', errors='replace') as f:
+            f.write(line)
+        write_project_log('claude-a', 'conv', f"{sender}->{recipient} {intent} ({len(content)} chars)")
+    except Exception:
         pass
 
 # Global state for message storage and gating
@@ -41,8 +62,47 @@ session_active = False
 SANITIZE_FILENAMES = os.getenv('AI_BRIDGE_SANITIZE_FILENAMES', '1') != '0'
 pending_actions = []  # list of {'id', 'message', 'status', 'created_at', 'decision', 'rationale'}
 next_action_id = 1
+# Idempotency tracking
+seen_message_ids = {}  # sender -> set of recent message_ids
+# Locks and sequential ids
+MESSAGES_LOCK = threading.Lock()
+PENDING_LOCK = threading.Lock()
+next_message_id = 1
 # Default: auto-approve (policy: no user prompts)
 yes_all_policy = {'claude-a': True, 'claude-b': True}
+
+def load_state():
+    """Load persistent state from state.json"""
+    global next_message_id, yes_all_policy
+    try:
+        state_file = LOG_DIR / 'state.json'
+        if state_file.exists():
+            with open(state_file, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            next_message_id = state.get('next_message_id', 1)
+            yes_all_policy = state.get('yes_all_policy', {'claude-a': True, 'claude-b': True})
+            write_project_log('claude-a', 'info', f'state loaded: next_message_id={next_message_id}')
+    except Exception as e:
+        write_project_log('claude-a', 'warn', f'state load failed: {e}')
+
+def save_state():
+    """Save persistent state to state.json"""
+    global next_message_id, yes_all_policy
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        state = {
+            'next_message_id': next_message_id,
+            'yes_all_policy': yes_all_policy,
+            'last_save': datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+        }
+        state_file = LOG_DIR / 'state.json'
+        # Atomic write
+        temp_file = state_file.with_suffix('.tmp')
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+        temp_file.replace(state_file)
+    except Exception as e:
+        write_project_log('claude-a', 'warn', f'state save failed: {e}')
 
 def _sanitize_component(name: str) -> str:
     # Normalize to NFKD and strip diacritics
@@ -219,6 +279,8 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.get_pending_actions()
         elif self.path.startswith('/api/logs'):
             self.get_logs()
+        elif self.path.startswith('/api/conversation'):
+            self.get_conversation()
         else:
             self.send_error(404, "API endpoint not found")
     
@@ -263,7 +325,7 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     
     def send_message(self, data):
         """Handle /api/send_message endpoint"""
-        global messages, pending_actions, next_action_id, yes_all_policy
+        global messages, pending_actions, next_action_id, yes_all_policy, next_message_id, seen_message_ids
 
         try:
             # Extract message data
@@ -273,10 +335,69 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             intent = data.get('intent', 'message')
             recipient = data.get('recipient')
             last_seen = data.get('last_seen', 'none')
+            incoming_id = data.get('id')  # For idempotency check
             
             if not content:
                 self.send_json_response(400, {"success": False, "error": "Content is required"})
                 return
+
+            # Idempotency check: reject if already processed
+            if incoming_id and sender:
+                sender_key = sender.lower()
+                if sender_key not in seen_message_ids:
+                    seen_message_ids[sender_key] = set()
+                
+                if incoming_id in seen_message_ids[sender_key]:
+                    write_project_log('claude-a', 'debug', f'duplicate message_id {incoming_id} from {sender} rejected')
+                    self.send_json_response(200, {"success": True, "message": "Duplicate message ignored", "duplicate": True})
+                    return
+                
+                # Add to seen set and limit size (keep last 100 per sender)
+                seen_message_ids[sender_key].add(incoming_id)
+                if len(seen_message_ids[sender_key]) > 100:
+                    # Remove oldest (convert to list, sort, keep last 100)
+                    ids_list = sorted(list(seen_message_ids[sender_key]))
+                    seen_message_ids[sender_key] = set(ids_list[-100:])
+
+            # Quick numeric decision 1/2/3: apply to latest pending action
+            try:
+                trimmed = str(content).strip()
+                if trimmed in ('1', '2', '3'):
+                    decision = 'yes' if trimmed == '1' else ('yes_all' if trimmed == '2' else 'no')
+                    target = None
+                    with PENDING_LOCK:
+                        for a in reversed(pending_actions):
+                            if a.get('status') == 'pending':
+                                target = a
+                                break
+                    if target:
+                        if decision == 'no':
+                            target['status'] = 'rejected'
+                            target['decision'] = 'no'
+                            target['rationale'] = 'numeric quick decision'
+                        else:
+                            if decision == 'yes_all':
+                                yes_all_policy[(sender or 'unknown').lower()] = True
+                            target['status'] = 'approved'
+                            target['decision'] = decision
+                            target['rationale'] = 'numeric quick decision'
+                            # On approval, write and forward the original pending message
+                            msg = target['message']
+                            try:
+                                self.write_message_file(msg, approved=True)
+                            except Exception:
+                                pass
+                            try:
+                                recip = str(msg.get('recipient', '')).lower()
+                                if recip in ("claude-b", "claude_b", "claudeb", "backend"):
+                                    time.sleep(random.uniform(0.5, 1.2))
+                                    self.forward_to_claude_b(msg)
+                            except Exception as e:
+                                write_project_log('claude-a', 'warn', f'forward after decision failed: {e}')
+                        self.send_json_response(200, {"success": True, "decision": decision, "action_id": target['id']})
+                        return
+            except Exception as e:
+                write_project_log('claude-a', 'warn', f'quick decision handling failed: {e}')
             
             # Infer defaults when sender/recipient are missing (e.g., from watcher)
             if not sender and not recipient:
@@ -285,11 +406,17 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             sender = sender or 'unknown'
             recipient = recipient or 'unknown'
 
-            # Generate timestamp
-            timestamp = datetime.utcnow().isoformat() + 'Z'
+            # Generate timestamp and assign sequential message id
+            timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+            with MESSAGES_LOCK:
+                mid = next_message_id
+                next_message_id += 1
+                # Persist state after incrementing
+                save_state()
             
             # Create message structure
             message = {
+                'id': mid,
                 'timestamp': timestamp,
                 'sender': sender,
                 'recipient': recipient,
@@ -298,9 +425,26 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 'last_seen': last_seen,
                 'content': content
             }
+
+            # Attach large payloads to avoid fragmentation in logs
+            try:
+                if isinstance(content, str) and len(content) > 8000:
+                    attach_dir = LOG_DIR / 'attachments'
+                    attach_dir.mkdir(parents=True, exist_ok=True)
+                    attach_name = f"msg-{mid}-{int(time.time())}.txt"
+                    with open(attach_dir / attach_name, 'w', encoding='utf-8', errors='replace') as af:
+                        af.write(content)
+                    message['content'] = f"[ATTACHMENT] messages/attachments/{attach_name} (len={len(content)})"
+            except Exception as e:
+                write_project_log('claude-a', 'warn', f'attachment write failed: {e}')
             
             # Store message (always visible in UI)
-            messages.append(message)
+            with MESSAGES_LOCK:
+                messages.append(message)
+            try:
+                append_conversation(message)
+            except Exception:
+                pass
 
             # Determine gating for outbound to Claude-B
             approved = True
@@ -330,6 +474,11 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if approved:
                 try:
                     if recipient.lower() in ("claude-b", "claude_b", "claudeb", "backend"):
+                        # human-like small delay before forwarding
+                        try:
+                            time.sleep(random.uniform(0.5, 1.4))
+                        except Exception:
+                            pass
                         self.forward_to_claude_b(message)
                         write_project_log('claude-a', 'info', 'forwarded to claude-b via HTTP')
                 except Exception as fwd_err:
@@ -367,7 +516,7 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             
             # Create session info file
             session_info = {
-                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
                 'objective': objective,
                 'mode': mode,
                 'roles': roles,
@@ -432,7 +581,7 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             # Write sidecar metadata with original path if sanitized
             if SANITIZE_FILENAMES:
                 meta = {
-                    'timestamp': datetime.utcnow().isoformat() + 'Z',
+                    'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
                     'original_path': original_path,
                     'sanitized_path': file_path
                 }
@@ -575,6 +724,64 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response(500, {'success': False, 'error': str(e)})
 
+    def get_conversation(self):
+        """Return conversation timeline from conversation.md"""
+        try:
+            # Parse tail param
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query or '')
+            tail = 50
+            try:
+                if 'tail' in qs:
+                    tail = max(1, min(1000, int(qs['tail'][0])))
+            except Exception:
+                tail = 50
+
+            LOG_DIR.mkdir(exist_ok=True)
+            conv_file = LOG_DIR / 'conversation.md'
+            
+            if not conv_file.exists():
+                self.send_json_response(200, {'success': True, 'conversation': [], 'count': 0})
+                return
+
+            # Read and parse conversation entries
+            entries = []
+            try:
+                with open(conv_file, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                
+                # Split by timestamp pattern and parse entries
+                import re
+                pattern = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z) \[CONV#(\d+)\] ([^(]+)\(([^)]+)\)->([^[]+) \[([^\]]+)\]\n(.*?)(?=\n\d{4}-\d{2}-\d{2}T|\Z)'
+                matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL)
+                
+                for match in matches:
+                    timestamp, msg_id, sender, role, recipient, intent, snippet = match
+                    entries.append({
+                        'timestamp': timestamp.strip(),
+                        'message_id': int(msg_id),
+                        'sender': sender.strip(),
+                        'role': role.strip(),
+                        'recipient': recipient.strip(),
+                        'intent': intent.strip(),
+                        'snippet': snippet.strip()
+                    })
+                
+                # Take last N entries
+                entries = entries[-tail:] if len(entries) > tail else entries
+                
+            except Exception as e:
+                entries = [{'error': f'Parse failed: {e}'}]
+
+            self.send_json_response(200, {
+                'success': True,
+                'conversation': entries,
+                'count': len(entries)
+            })
+
+        except Exception as e:
+            self.send_json_response(500, {'success': False, 'error': str(e)})
+
     def get_pending_actions(self):
         """Return pending actions for gating"""
         try:
@@ -660,6 +867,7 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     def write_message_file(self, message, approved=True):
         """Write message to file for PowerShell watcher.
         If not approved, write as pending_* to avoid watcher triggering.
+        Uses atomic write to prevent partial reads.
         """
         try:
             # Ensure messages directory exists
@@ -672,6 +880,7 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 [ROLE]: {message['role'].capitalize()}
 [INTENT]: {message['intent']}
 [LAST_SEEN]: {message['last_seen']}
+[MESSAGE_ID]: {message.get('id', '?')}
 [SUMMARY]:
 - {message['intent'].capitalize()} phase
 - Real agent communication
@@ -685,8 +894,11 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 filename = f"pending_{filename}"
             file_path = os.path.join('messages', filename)
             
-            with open(file_path, 'w', encoding='utf-8') as f:
+            # Atomic write: write to temp file, then rename
+            temp_path = file_path + '.tmp'
+            with open(temp_path, 'w', encoding='utf-8') as f:
                 f.write(formatted_message)
+            os.replace(temp_path, file_path)
             
             print(f"[FILE] Message written to: {file_path}")
             
@@ -757,11 +969,22 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     
     def log_message(self, format, *args):
         """Custom log format"""
-        print(f"[WEB] {self.address_string()} - {format % args}")
+        msg = format % args
+        # Reduce noise: skip common 200 GETs to static/messages/logs/status
+        suppress = False
         try:
-            write_project_log('claude-a', 'web', format % args)
+            if msg.startswith('"GET '):
+                if ' 200 ' in msg or ' 304 ' in msg:
+                    if any(p in msg for p in ('/api/logs', '/api/messages', '/api/status', '/messages/', '/styles.css', '/script.js', '/index.html', '/favicon.ico')):
+                        suppress = True
         except Exception:
-            pass
+            suppress = False
+        if not suppress:
+            print(f"[WEB] {self.address_string()} - {msg}")
+            try:
+                write_project_log('claude-a', 'web', msg)
+            except Exception:
+                pass
 
 def check_files():
     """Verify required files exist"""
@@ -886,6 +1109,20 @@ if __name__ == "__main__":
     
     # Change to script directory
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Load persistent state
+    load_state()
+    
+    # Load previous session metadata if exists
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        sess = LOG_DIR / 'session.json'
+        if sess.exists():
+            with open(sess, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            session_active = (data.get('status') == 'active')
+    except Exception:
+        pass
     
     # Check command line arguments
     if len(sys.argv) > 1:
