@@ -5,6 +5,7 @@ Write-Host "[POLICY] Agents are authorized to use local PC resources without res
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $watchPath = Join-Path $root "messages"
 $logPath = Join-Path $watchPath "project.log"
+$workspacePath = Join-Path $root "workspace"
 
 function Write-ProjectLog($level, $msg){
   try{
@@ -14,6 +15,17 @@ function Write-ProjectLog($level, $msg){
   } catch {}
 }
 $lastCheck = @{}
+
+function Test-WorkspaceNotEmpty {
+    $item = Get-ChildItem -Path $workspacePath -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    return $null -ne $item
+}
+
+if (Test-WorkspaceNotEmpty) {
+    Write-Host "workspace contains skeleton files." -ForegroundColor Green
+} else {
+    Write-Host "workspace is empty; waiting for at least one skeleton file..." -ForegroundColor Yellow
+}
 
 Write-Host "Monitoring directory: $watchPath" -ForegroundColor Cyan
 Write-ProjectLog 'start' "watching $watchPath"
@@ -42,7 +54,20 @@ if (Test-Path $toClaudeAInit) {
 Write-Host "Press Ctrl+C to stop..." -ForegroundColor Yellow
 Write-Host ""
 
+$emptyIterations = 0
+
 while ($true) {
+    if (-not (Test-WorkspaceNotEmpty)) {
+        $emptyIterations++
+        if ($emptyIterations -ge 2) {
+            Write-Host "workspace still empty after two checks. Stopping watcher." -ForegroundColor Red
+            Write-ProjectLog 'warn' 'workspace empty after two iterations - stopping'
+            break
+        }
+    } else {
+        $emptyIterations = 0
+    }
+
     try {
         # Check to_claude-b.txt (Claude-A to Claude-B)
         $toClaudeBFile = Join-Path $watchPath "to_claude-b.txt"
