@@ -17,7 +17,28 @@ $lastCheck = @{}
 
 Write-Host "Monitoring directory: $watchPath" -ForegroundColor Cyan
 Write-ProjectLog 'start' "watching $watchPath"
-Write-Host "Watching for: to_claude-b.txt and from_claude-a.txt" -ForegroundColor Cyan
+Write-Host "Watching for: to_claude-b.txt, from_claude-b.txt, and to_claude-a.txt" -ForegroundColor Cyan
+
+# Send initial objective to Claude-A if present
+$toClaudeAInit = Join-Path $watchPath "to_claude-a.txt"
+if (Test-Path $toClaudeAInit) {
+    try {
+        $initContent = Get-Content -Path $toClaudeAInit -Raw
+        $m = [regex]::Match($initContent, '(?s)\[PAYLOAD\]:\s*(.*)$')
+        if ($m.Success) {
+            $payload = $m.Groups[1].Value.Trim()
+            $body = @{ content = $payload; intent = "code" } | ConvertTo-Json
+            $response = Invoke-RestMethod -Uri "http://localhost:8080/api/send_message" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10
+            Write-Host "Initial to_claude-a.txt sent to Claude-A" -ForegroundColor Green
+            Write-ProjectLog 'info' 'initial to_claude-a forwarded to claude-a'
+        }
+        $lastCheck['to_claude-a'] = (Get-Item $toClaudeAInit).LastWriteTime
+    } catch {
+        Write-Host "Error forwarding initial to_claude-a.txt: $($_.Exception.Message)" -ForegroundColor Red
+        Write-ProjectLog 'warn' ("initial to_claude-a forward failed: " + $_.Exception.Message)
+    }
+}
+
 Write-Host "Press Ctrl+C to stop..." -ForegroundColor Yellow
 Write-Host ""
 
@@ -58,8 +79,43 @@ while ($true) {
                 }
             }
         }
-        
-        # Check from_claude-b.txt (Claude-B to Claude-A)  
+
+        # Check to_claude-a.txt (messages to Claude-A)
+        $toClaudeAFile = Join-Path $watchPath "to_claude-a.txt"
+        if (Test-Path $toClaudeAFile) {
+            $currentTime = (Get-Item $toClaudeAFile).LastWriteTime
+
+            if (-not $lastCheck.ContainsKey("to_claude-a") -or $lastCheck["to_claude-a"] -ne $currentTime) {
+                $lastCheck["to_claude-a"] = $currentTime
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] to_claude-a.txt updated - Triggering Claude-A" -ForegroundColor Green
+
+                try {
+                    $messageContent = Get-Content -Path $toClaudeAFile -Raw
+
+                    # Extract payload section (multiline)
+                    $m = [regex]::Match($messageContent, '(?s)\[PAYLOAD\]:\s*(.*)$')
+                    if ($m.Success) {
+                        $payload = $m.Groups[1].Value.Trim()
+
+                        # Create request body for Claude-A
+                        $body = @{
+                            content = $payload
+                            intent = "code"
+                        } | ConvertTo-Json
+
+                        # Send to Claude-A
+                        $response = Invoke-RestMethod -Uri "http://localhost:8080/api/send_message" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10
+                        Write-Host "  -> Message forwarded to Claude-A successfully" -ForegroundColor Green
+                        Write-ProjectLog 'info' 'forwarded file payload to claude-a (to_claude-a)'
+                    }
+                } catch {
+                    Write-Host "  -> Error forwarding to Claude-A: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-ProjectLog 'warn' ("forward to claude-a (to_claude-a) failed: " + $_.Exception.Message)
+                }
+            }
+        }
+
+        # Check from_claude-b.txt (Claude-B to Claude-A)
         $fromClaudeBFile = Join-Path $watchPath "from_claude-b.txt"
         if (Test-Path $fromClaudeBFile) {
             $currentTime = (Get-Item $fromClaudeBFile).LastWriteTime
