@@ -18,6 +18,7 @@ import random
 import threading
 from pathlib import Path
 from datetime import datetime, timezone
+import re
 
 # Server configuration
 PORT = 8080
@@ -38,23 +39,46 @@ def write_project_log(component: str, level: str, message: str):
         # Never fail main flow due to logging
         pass
 
-def append_conversation(message: dict):
+def append_conversation(message: dict) -> bool:
+    """Validate, assign id and log conversation. Returns True if stored."""
+    global next_message_id, valid_message_count
     try:
+        content = (message.get('content', '') or '')
+        lowered = content.lower()
+        if any(re.search(pat, lowered) for pat in INVALID_CONTENT_PATTERNS) or len(content) < MIN_CONTENT_LENGTH:
+            write_project_log('claude-a', 'warn', f"invalid message content from {message.get('sender','?')}")
+            return False
+
+        mid = next_message_id
+        next_message_id += 1
+        save_state()
+        message['id'] = mid
+
+        content = message.get('content', '') or ''
+        if isinstance(content, str) and len(content) > 8000:
+            attach_dir = LOG_DIR / 'attachments'
+            attach_dir.mkdir(parents=True, exist_ok=True)
+            attach_name = f"msg-{mid}-{int(time.time())}.txt"
+            with open(attach_dir / attach_name, 'w', encoding='utf-8', errors='replace') as af:
+                af.write(content)
+            message['content'] = f"[ATTACHMENT] messages/attachments/{attach_name} (len={len(content)})"
+            content = message['content']
+
         LOG_DIR.mkdir(exist_ok=True)
         ts = message.get('timestamp') or datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
         sender = message.get('sender','?')
         recipient = message.get('recipient','?')
         role = message.get('role','?')
         intent = message.get('intent','?')
-        mid = message.get('id', '?')
-        content = (message.get('content','') or '')
         snippet = content if len(content) <= 400 else (content[:397] + '...')
         line = f"{ts} [CONV#{mid}] {sender}({role})->{recipient} [{intent}]\n{snippet}\n\n"
         with open(LOG_DIR / 'conversation.md', 'a', encoding='utf-8', errors='replace') as f:
             f.write(line)
         write_project_log('claude-a', 'conv', f"{sender}->{recipient} {intent} ({len(content)} chars)")
+        valid_message_count += 1
+        return True
     except Exception:
-        pass
+        return False
 
 # Global state for message storage and gating
 messages = []
@@ -70,6 +94,13 @@ PENDING_LOCK = threading.Lock()
 next_message_id = 1
 # Default: auto-approve (policy: no user prompts)
 yes_all_policy = {'claude-a': True, 'claude-b': True}
+
+# Content validation settings
+INVALID_CONTENT_PATTERNS = [r"test"]
+MIN_CONTENT_LENGTH = 5
+
+# Track valid messages for health endpoint
+valid_message_count = 0
 
 def load_state():
     """Load persistent state from state.json"""
@@ -275,6 +306,8 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.get_messages()
         elif self.path == '/api/status':
             self.get_status()
+        elif self.path == '/api/health':
+            self.get_health()
         elif self.path == '/api/pending_actions':
             self.get_pending_actions()
         elif self.path.startswith('/api/logs'):
@@ -406,17 +439,11 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             sender = sender or 'unknown'
             recipient = recipient or 'unknown'
 
-            # Generate timestamp and assign sequential message id
+            # Generate timestamp
             timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
-            with MESSAGES_LOCK:
-                mid = next_message_id
-                next_message_id += 1
-                # Persist state after incrementing
-                save_state()
-            
-            # Create message structure
+
+            # Create message structure without id
             message = {
-                'id': mid,
                 'timestamp': timestamp,
                 'sender': sender,
                 'recipient': recipient,
@@ -426,25 +453,14 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 'content': content
             }
 
-            # Attach large payloads to avoid fragmentation in logs
-            try:
-                if isinstance(content, str) and len(content) > 8000:
-                    attach_dir = LOG_DIR / 'attachments'
-                    attach_dir.mkdir(parents=True, exist_ok=True)
-                    attach_name = f"msg-{mid}-{int(time.time())}.txt"
-                    with open(attach_dir / attach_name, 'w', encoding='utf-8', errors='replace') as af:
-                        af.write(content)
-                    message['content'] = f"[ATTACHMENT] messages/attachments/{attach_name} (len={len(content)})"
-            except Exception as e:
-                write_project_log('claude-a', 'warn', f'attachment write failed: {e}')
-            
-            # Store message (always visible in UI)
             with MESSAGES_LOCK:
-                messages.append(message)
-            try:
-                append_conversation(message)
-            except Exception:
-                pass
+                valid = append_conversation(message)
+                if valid:
+                    messages.append(message)
+
+            if not valid:
+                self.send_json_response(400, {"success": False, "error": "Invalid message content"})
+                return
 
             # Determine gating for outbound to Claude-B
             approved = True
@@ -501,7 +517,7 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     
     def start_session(self, data):
         """Handle /api/start_session endpoint"""
-        global session_active
+        global session_active, valid_message_count
         
         try:
             objective = data.get('objective', '')
@@ -513,6 +529,7 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 return
             
             session_active = True
+            valid_message_count = 0
             
             # Create session info file
             session_info = {
@@ -682,6 +699,19 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             }
             self.send_json_response(200, status)
             write_project_log('claude-a', 'debug', 'status requested')
+        except Exception as e:
+            self.send_json_response(500, {'error': str(e)})
+
+    def get_health(self):
+        """Return health info about current session"""
+        try:
+            healthy = session_active and valid_message_count > 0
+            status = {
+                'session_active': session_active,
+                'valid_messages': valid_message_count,
+                'healthy': healthy
+            }
+            self.send_json_response(200, status)
         except Exception as e:
             self.send_json_response(500, {'error': str(e)})
 
