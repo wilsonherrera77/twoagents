@@ -83,3 +83,17 @@ El proceso termina cuando algún agente emite `INTENT: done`.
 3. **Código completo con rutas**: cada archivo debe incluir ruta y contenido completo
 4. **Máximo 3 bullets en [SUMMARY]** para lectura rápida
 5. **Workspace compartido**: ambos agentes guardan/leen de `C:\ai-bridge\workspace\`
+## Lanzamiento r�pido
+
+- Iniciar solo frontend/API (8080):
+  - start.bat
+  - o python server.py
+
+- Iniciar todo (8080, 8081 y watcher):
+  - start_all.bat
+
+## Notas
+- Requiere Python 3.x en PATH.
+- Los servicios se exponen en http://localhost:8080 y http://localhost:8081.
+- El Watcher monitorea C:\ai-bridge\messages.
+- Evita caracteres no ASCII si usas Invoke-RestMethod antiguo. El servidor ahora intenta decodificar UTF-8 con fallback.

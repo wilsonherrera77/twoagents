@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Bridge: Herramienta Semi-Asistida</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>[AI] AI-Bridge</h1>
+            <p>Herramienta Semi-Asistida de Desarrollo Colaborativo</p>
+            <p style="color:#c05621;font-weight:600">[POLITICA] Los agentes estan autorizados para usar los recursos locales de la PC sin restricciones para alcanzar el objetivo (sin solicitar aprobaciones intermedias).</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Objective Section -->
+            <section class="objective-section">
+                <h2>[*] Objetivo del Proyecto</h2>
+                <textarea id="objective" placeholder="Define aquí tu objetivo (ej: Construir una API en FastAPI que reciba un CSV, calcule estadísticas por columna y devuelva JSON, con /health y tests.)"></textarea>
+                <button onclick="saveObjective()">[SAVE] Guardar Objetivo</button>
+            </section>
+
+            <!-- Interaction Configuration -->
+            <section class="interaction-config">
+                <h2>[CONFIG] Configuracion de Interaccion</h2>
+                
+                <!-- Mode Selection -->
+                <div class="config-group">
+                    <h3>[MODE] Modo de Interaccion</h3>
+                    <div class="mode-selector">
+                        <label class="mode-option">
+                            <input type="radio" name="interaction-mode" value="mentor-apprentice" checked>
+                            <div class="mode-card">
+                                <h4>[MENTOR] Mentor-Aprendiz</h4>
+                                <p>Uno guía y planifica, otro implementa</p>
+                            </div>
+                        </label>
+                        <label class="mode-option">
+                            <input type="radio" name="interaction-mode" value="collaborative">
+                            <div class="mode-card">
+                                <h4>[COLAB] Colaborativo</h4>
+                                <p>Ambos dialogan como iguales y dividen tareas</p>
+                            </div>
+                        </label>
+                        <label class="mode-option">
+                            <input type="radio" name="interaction-mode" value="specialized">
+                            <div class="mode-card">
+                                <h4>[SPEC] Especializado</h4>
+                                <p>Cada uno maneja diferentes aspectos técnicos</p>
+                            </div>
+                        </label>
+                        <label class="mode-option">
+                            <input type="radio" name="interaction-mode" value="competitive">
+                            <div class="mode-card">
+                                <h4>[COMP] Competitivo</h4>
+                                <p>Cada uno propone soluciones y convergen</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Role Assignment -->
+                <div class="config-group">
+                    <h3>[ROLES] Asignacion de Roles</h3>
+                    <div class="role-assignment">
+                        <div class="agent-role">
+                            <label>Claude-A sera:</label>
+                            <select id="claude-role">
+                                <option value="mentor">[MENTOR] Mentor/Arquitecto</option>
+                                <option value="implementer">[IMPL] Implementador</option>
+                                <option value="frontend" selected>[FRONT] Frontend Specialist</option>
+                                <option value="backend">[BACK] Backend Specialist</option>
+                                <option value="tester">[TEST] Testing Specialist</option>
+                                <option value="reviewer">[REVIEW] Code Reviewer</option>
+                            </select>
+                        </div>
+                        <div class="agent-role">
+                            <label>Claude-B sera:</label>
+                            <select id="claude-b-role">
+                                <option value="implementer">[IMPL] Implementador</option>
+                                <option value="mentor">[MENTOR] Mentor/Arquitecto</option>
+                                <option value="frontend">[FRONT] Frontend Specialist</option>
+                                <option value="backend" selected>[BACK] Backend Specialist</option>
+                                <option value="tester">[TEST] Testing Specialist</option>
+                                <option value="reviewer">[REVIEW] Code Reviewer</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Auto-Run Configuration -->
+                <div class="config-group">
+                    <h3>[RUN] Configuracion de Ejecucion</h3>
+                    <div class="run-config">
+                        <label>
+                            <input type="checkbox" id="auto-continue" checked>
+                            Continuar automaticamente despues de cada respuesta
+                        </label>
+                        <label>
+                            Max iteraciones: 
+                            <input type="number" id="max-iterations" value="10" min="1" max="50">
+                        </label>
+                        <label>
+                            Pausa entre mensajes (segundos): 
+                            <input type="number" id="message-delay" value="3" min="1" max="30">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Run Button -->
+                <div class="run-section">
+                    <button id="run-btn" class="run-button" onclick="startAutomatedSession()">
+                        [START] INICIAR SESION AUTOMATIZADA
+                    </button>
+                    <button id="stop-btn" class="stop-button" onclick="stopAutomatedSession()" style="display: none;">
+                        [STOP] DETENER SESION
+                    </button>
+                </div>
+            </section>
+
+            <!-- Live Conversation Display -->
+            <section class="conversation-display">
+                <h2>[CHAT] Conversacion en Vivo: Claude-A y Claude-B</h2>
+                <div class="conversation-container">
+                    <div id="conversation-log" class="conversation-log">
+                        <div class="conversation-message system">
+                            <div class="message-header">
+                                <span class="sender">[SYS] Sistema</span>
+                                <span class="timestamp" id="system-time"></span>
+                            </div>
+                            <div class="message-content">
+                                Sesion lista. Configura los roles y presiona RUN para iniciar la conversacion automatizada.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="conversation-controls">
+                        <button onclick="clearConversation()">[CLEAR] Limpiar Chat</button>
+                        <button onclick="exportConversation()">[EXPORT] Exportar</button>
+                        <button onclick="scrollToBottom()">[DOWN] Ir al Final</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Message Exchange Section -->
+            <div class="message-exchange">
+                <div class="agent-panel">
+                    <h3 id="claude-title">[A] Claude-A (Frontend)</h3>
+                    <div class="message-box">
+                        <textarea id="claude-message" placeholder="Mensaje para Claude-A..."></textarea>
+                        <div class="button-group">
+                            <button onclick="copyToClipboard('claude-message')">[COPY] Copiar</button>
+                            <button onclick="clearMessage('claude-message')">[CLEAR] Limpiar</button>
+                            <button onclick="loadFromFile('to_claude-a.txt', 'claude-message')">[LOAD] Cargar</button>
+                            <button onclick="sendMessage('claude')">[SEND] Enviar</button>
+                        </div>
+                    </div>
+                    <div class="timestamp-info">
+                        <small>Ultimo TIMESTAMP: <span id="claude-timestamp">none</span></small>
+                    </div>
+                </div>
+
+                <div class="agent-panel">
+                    <h3 id="codex-title">[B] Claude-B (Backend)</h3>
+                    <div class="message-box">
+                        <textarea id="codex-message" placeholder="Mensaje para Claude-B..."></textarea>
+                        <div class="button-group">
+                            <button onclick="copyToClipboard('codex-message')">[COPY] Copiar</button>
+                            <button onclick="clearMessage('codex-message')">[CLEAR] Limpiar</button>
+                            <button onclick="loadFromFile('to_claude-b.txt', 'codex-message')">[LOAD] Cargar</button>
+                            <button onclick="sendMessage('codex')">[SEND] Enviar</button>
+                        </div>
+                    </div>
+                    <div class="timestamp-info">
+                        <small>Ultimo TIMESTAMP: <span id="codex-timestamp">none</span></small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <section class="quick-actions">
+                <h3>[QUICK] Acciones Rapidas</h3>
+                <div class="action-buttons">
+                    <button onclick="generateTimestamp()">[TIME] Generar Timestamp</button>
+                    <button onclick="createStartupPrompt()">[PROMPT] Crear Prompt Inicial</button>
+                    <button onclick="viewLogs()">[LOGS] Ver Logs</button>
+                    <button onclick="openWorkspace()">[WORK] Abrir Workspace</button>
+                    <button onclick="openProjectLog()">[LOG] Ver Log del Proyecto</button>
+                    <button onclick="applyFileBundlePrompt()">[APPLY] Aplicar Bundle de Archivos</button>
+                </div>
+            </section>
+
+            <!-- Gating Policy -->
+            <section class="interaction-config">
+                <h3>[GATING] Politica de Aprobacion</h3>
+                <div class="config-group">
+                    <div class="role-assignment">
+                        <div class="agent-role">
+                            <label><input type="checkbox" id="yesall-a" checked onchange="setYesAll('claude-a', this.checked)"> Auto-aprobar (Yes all) mensajes de Claude-A</label>
+                        </div>
+                        <div class="agent-role">
+                            <label><input type="checkbox" id="yesall-b" checked onchange="setYesAll('claude-b', this.checked)"> Auto-aprobar (Yes all) mensajes de Claude-B</label>
+                        </div>
+                        <small>Nota: Por politica, la auto-aprobacion viene activada por defecto (sin prompts al usuario).</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Protocol Template -->
+            <section class="protocol-template">
+                <h3>[TEMPLATE] Plantilla de Protocolo</h3>
+                <div class="template-box">
+                    <pre id="protocol-template">[TIMESTAMP]: <span id="current-timestamp"></span>
+[FROM]: Claude-A|Claude-B
+[TO]: Claude-B|Claude-A
+[ROLE]: Mentor|Implementador
+[INTENT]: plan|design|code|review|test|done
+[LAST_SEEN]: none
+[SUMMARY]:
+- punto1
+- punto2
+- punto3
+[PAYLOAD]:
+(contenido del mensaje)</pre>
+                    <button onclick="copyTemplate()">[COPY] Copiar Plantilla</button>
+                </div>
+            </section>
+
+            <!-- Status Panel -->
+            <section class="status-panel">
+                <h3>[STATUS] Estado del Sistema</h3>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">Directorio:</span>
+                        <span class="status-value">C:\ai-bridge\</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Workspace:</span>
+                        <span class="status-value">C:\ai-bridge\workspace\</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Estado:</span>
+                        <span class="status-value" id="system-status">[OK] Listo</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <footer>
+            <p>[LINK] <a href="https://github.com/wilsonherrera77/twoagents" target="_blank">GitHub: wilsonherrera77/twoagents</a></p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

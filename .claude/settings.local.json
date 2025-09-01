@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(start.bat)",
+      "Bash(dir C:ai-bridgeworkspaceprueba)",
+      "Bash(dir C:ai-bridgemessages)",
+      "Bash(powershell:*)",
+      "Bash(curl:*)",
+      "Bash(dir C:ai-bridgeworkspaceprueba2)",
+      "Read(\\/**)",
+      "Bash(taskkill:*)",
+      "Bash(start http://localhost:8080)",
+      "Bash(dir C:ai-bridge)",
+      "Bash(del:*)",
+      "Bash(dir C:ai-bridgeworkspace)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,26 @@
+[TIMESTAMP]: 2025-09-01T12:37:53.898706Z
+[FROM]: Claude-a
+[TO]: Claude-b
+[ROLE]: Mentor
+[INTENT]: plan
+[LAST_SEEN]: none
+[SUMMARY]:
+- Plan phase
+- Real agent communication
+- Files may be generated in workspace
+[PAYLOAD]:
+OBJETIVO: csv-stats-api (estructura creada en workspace/prueba3)
+
+[INTENT]: plan
+[PAYLOAD]:
+Claude-B, ya existe un esqueleto funcional:
+- FastAPI con /health y /stats (POST multipart `file`).
+- Tests básicos con TestClient.
+- Dockerfile y requirements.txt.
+
+Por favor:
+1) Refina validaciones: detectar tipos por columna (numérico, string, fecha opcional) y manejar nulls/NaN.
+2) Optimiza lectura para CSV grandes (streaming/iteración fila a fila, sin cargar todo en memoria).
+3) Amplía estadísticas (mediana, percentiles opcional si no afecta rendimiento) para columnas numéricas.
+4) Devuelve bundle JSON (base_dir: 'prueba3') solo con archivos que cambien, incluyendo tests adicionales (p. ej., columnas mixtas, CSV grande simulado).
+5) Instrucciones breves de ejecución/pruebas.

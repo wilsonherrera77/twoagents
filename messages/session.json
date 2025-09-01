@@ -1,0 +1,10 @@
+{
+  "timestamp": "2025-09-01T12:31:22.442474Z",
+  "objective": "OBJETIVO - 'csv-stats-api': Construir una API en FastAPI que reciba un CSV, calcule estad\u00edsticas por columna (min, max, mean, count, nulls) y devuelva JSON; incluir /health, validaci\u00f3n de tipos, y tests con pytest. Desplegar en Docker.",
+  "mode": "mentor-apprentice",
+  "roles": {
+    "claude-a": "mentor",
+    "claude-b": "backend"
+  },
+  "status": "active"
+}
