@@ -9,7 +9,7 @@ let automatedSession = {
     messageDelay: 3000,
     conversationHistory: [],
     mode: 'specialized',
-    roles: { 'claude-a': 'frontend', 'claude-b': 'backend' },
+    roles: { 'claude-a': 'controller', 'claude-b': 'executor' },
     serverCount: 0
 };
 
@@ -31,6 +31,8 @@ document.addEventListener('DOMContentLoaded', function() {
     startMessagePolling();
     // Default gating: auto-approve (policy: no prompts)
     try { setYesAll('claude-a', true); setYesAll('claude-b', true); } catch (e) {}
+    fetchMetrics();
+    setInterval(fetchMetrics, 2000);
 });
 
 // Save objective to localStorage
@@ -114,8 +116,8 @@ function createStartupPrompt() {
     const startupPrompt = `OBJETIVO: ${objective}
 
 CONFIGURACION DUAL-AGENT:
-- Claude-A (Frontend): Interfaz, UX, validacion cliente
-- Claude-B (Backend): Logica negocio, APIs, persistencia
+- Claude-A (Controller): coordina y supervisa
+- Claude-B (Executor): implementa y responde
 - Workspace compartido: C:\\ai-bridge\\workspace\\
 - Comunicacion via archivos: to_claude-b.txt / from_claude-b.txt
 
@@ -129,7 +131,7 @@ FORMATO MENSAJES:
 [TIMESTAMP]: ${generateTimestamp()}
 [FROM]: Claude-A|Claude-B
 [TO]: Claude-B|Claude-A
-[ROLE]: Frontend|Backend
+[ROLE]: Controller|Executor
 [INTENT]: plan|design|code|review|test|done
 [PAYLOAD]: (mensaje real)`;
 
@@ -238,7 +240,7 @@ Messages: C:\\ai-bridge\\messages\\
 Comunicacion real entre Claude-A y Claude-B iniciada.`);
 
         // Enviar primer mensaje (plan) de Claude-A -> Claude-B basado en el objetivo
-        const initialPlan = `OBJETIVO: ${objective}\n\n[INTENT]: plan\n[PAYLOAD]:\nPor favor, analiza el objetivo y responde con:\n- division de tareas breve\n- primeros pasos para backend y frontend\n- dudas si las hay`;
+        const initialPlan = `OBJETIVO: ${objective}\n\n[INTENT]: plan\n[PAYLOAD]:\nPor favor, analiza el objetivo y responde con:\n- division de tareas breve\n- primeros pasos para controller y executor\n- dudas si las hay`;
         try {
             const sendResp = await fetch('/api/send_message', {
                 method: 'POST',
@@ -246,7 +248,7 @@ Comunicacion real entre Claude-A y Claude-B iniciada.`);
                 body: JSON.stringify({
                     sender: 'claude-a',
                     recipient: 'claude-b',
-                    role: automatedSession.roles['claude-a'] || 'mentor',
+                    role: automatedSession.roles['claude-a'] || 'controller',
                     intent: 'plan',
                     last_seen: 'none',
                     content: initialPlan
@@ -292,7 +294,7 @@ async function sendMessage(agent) {
     }
     
     try {
-        // Send real message to backend
+        // Send real message to peer server
         const response = await fetch('/api/send_message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -347,6 +349,20 @@ function startMessagePolling() {
     setInterval(pollForMessages, 3000); // Poll every 3 seconds
 }
 
+// Fetch metrics for monitoring panel
+async function fetchMetrics() {
+    try {
+        const resp = await fetch('/api/metrics');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        document.getElementById('metric-message-count').textContent = data.message_count ?? 0;
+        document.getElementById('metric-mpm').textContent = data.messages_per_minute ?? 0;
+        document.getElementById('metric-repeat-count').textContent = data.repeat_count ?? 0;
+    } catch (e) {
+        console.warn('metrics fetch failed', e);
+    }
+}
+
 // Add message to conversation
 function addConversationMessage(sender, senderName, content) {
     const conversationLog = document.getElementById('conversation-log');
@@ -379,9 +395,9 @@ function addConversationMessage(sender, senderName, content) {
 // Helper functions
 function getAgentDisplayName(agent) {
     if (agent.includes('claude-a') || agent === 'claude') {
-        return `Claude-A (${automatedSession.roles['claude-a'] || 'Frontend'})`;
+        return `Claude-A (${automatedSession.roles['claude-a'] || 'Controller'})`;
     } else if (agent.includes('claude-b') || agent === 'codex') {
-        return `Claude-B (${automatedSession.roles['claude-b'] || 'Backend'})`;
+        return `Claude-B (${automatedSession.roles['claude-b'] || 'Executor'})`;
     }
     return agent;
 }
@@ -455,16 +471,12 @@ function initializeRoleSystem() {
 function updateAgentTitles() {
     const claudeARole = document.getElementById('claude-role').value;
     const claudeBRole = document.getElementById('claude-b-role').value;
-    
+
     const roleNames = {
-        mentor: 'Mentor/Arquitecto',
-        implementer: 'Implementador', 
-        frontend: 'Frontend Specialist',
-        backend: 'Backend Specialist',
-        tester: 'Testing Specialist',
-        reviewer: 'Code Reviewer'
+        controller: 'Controller',
+        executor: 'Executor'
     };
-    
+
     document.getElementById('claude-title').innerHTML = `[A] Claude-A (${roleNames[claudeARole]})`;
     document.getElementById('codex-title').innerHTML = `[B] Claude-B (${roleNames[claudeBRole]})`;
 }

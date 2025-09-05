@@ -22,6 +22,16 @@
                 <button onclick="saveObjective()">[SAVE] Guardar Objetivo</button>
             </section>
 
+            <!-- Monitoring Panel -->
+            <section class="monitor-section">
+                <h2>[MONITOR] Métricas de Ejecución</h2>
+                <ul id="metrics-list">
+                    <li>Mensajes: <span id="metric-message-count">0</span></li>
+                    <li>Mensajes/minuto: <span id="metric-mpm">0</span></li>
+                    <li>Repeticiones consecutivas: <span id="metric-repeat-count">0</span></li>
+                </ul>
+            </section>
+
             <!-- Interaction Configuration -->
             <section class="interaction-config">
                 <h2>[CONFIG] Configuracion de Interaccion</h2>
@@ -68,23 +78,15 @@
                         <div class="agent-role">
                             <label>Claude-A sera:</label>
                             <select id="claude-role">
-                                <option value="mentor">[MENTOR] Mentor/Arquitecto</option>
-                                <option value="implementer">[IMPL] Implementador</option>
-                                <option value="frontend" selected>[FRONT] Frontend Specialist</option>
-                                <option value="backend">[BACK] Backend Specialist</option>
-                                <option value="tester">[TEST] Testing Specialist</option>
-                                <option value="reviewer">[REVIEW] Code Reviewer</option>
+                                <option value="controller" selected>[CTRL] Controller</option>
+                                <option value="executor">[EXEC] Executor</option>
                             </select>
                         </div>
                         <div class="agent-role">
                             <label>Claude-B sera:</label>
                             <select id="claude-b-role">
-                                <option value="implementer">[IMPL] Implementador</option>
-                                <option value="mentor">[MENTOR] Mentor/Arquitecto</option>
-                                <option value="frontend">[FRONT] Frontend Specialist</option>
-                                <option value="backend" selected>[BACK] Backend Specialist</option>
-                                <option value="tester">[TEST] Testing Specialist</option>
-                                <option value="reviewer">[REVIEW] Code Reviewer</option>
+                                <option value="executor" selected>[EXEC] Executor</option>
+                                <option value="controller">[CTRL] Controller</option>
                             </select>
                         </div>
                     </div>
@@ -146,7 +148,7 @@
             <!-- Message Exchange Section -->
             <div class="message-exchange">
                 <div class="agent-panel">
-                    <h3 id="claude-title">[A] Claude-A (Frontend)</h3>
+                    <h3 id="claude-title">[A] Claude-A (Controller)</h3>
                     <div class="message-box">
                         <textarea id="claude-message" placeholder="Mensaje para Claude-A..."></textarea>
                         <div class="button-group">
@@ -162,7 +164,7 @@
                 </div>
 
                 <div class="agent-panel">
-                    <h3 id="codex-title">[B] Claude-B (Backend)</h3>
+                    <h3 id="codex-title">[B] Claude-B (Executor)</h3>
                     <div class="message-box">
                         <textarea id="codex-message" placeholder="Mensaje para Claude-B..."></textarea>
                         <div class="button-group">

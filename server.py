@@ -19,6 +19,7 @@ import threading
 from pathlib import Path
 from datetime import datetime, timezone
 import re
+import hashlib
 
 # Server configuration
 PORT = 8080
@@ -101,6 +102,49 @@ MIN_CONTENT_LENGTH = 5
 
 # Track valid messages for health endpoint
 valid_message_count = 0
+
+# Rate limiting and watchdog settings
+BASE_DELAY = 1.0  # base delay in seconds
+BACKOFF_MULTIPLIER = 2.0
+MAX_BACKOFF = 16.0
+MAX_TURNS = 100
+MAX_REPEAT = 5
+ALLOWED_ROLES = {'controller', 'executor'}
+ALLOWED_INTENTS = {'plan', 'design', 'code', 'review', 'test', 'done', 'manual', 'message'}
+
+# Metrics and role state
+monitor_state = {
+    'start_time': time.time(),
+    'message_count': 0,
+    'repeat_count': 0,
+    'last_content_hash': None,
+    'last_message_time': 0.0,
+    'backoff': 1.0
+}
+
+current_roles = {'claude-a': 'controller', 'claude-b': 'executor'}
+
+def rate_limit():
+    """Apply exponential backoff between messages"""
+    now = time.time()
+    required = BASE_DELAY * monitor_state['backoff']
+    elapsed = now - monitor_state['last_message_time']
+    if elapsed < required:
+        time.sleep(required - elapsed)
+        monitor_state['backoff'] = min(monitor_state['backoff'] * BACKOFF_MULTIPLIER, MAX_BACKOFF)
+    else:
+        monitor_state['backoff'] = 1.0
+    monitor_state['last_message_time'] = time.time()
+
+def update_metrics(content: str):
+    """Update monitoring metrics for each message"""
+    monitor_state['message_count'] += 1
+    content_hash = hashlib.sha256((content or '').encode('utf-8')).hexdigest()
+    if content_hash == monitor_state['last_content_hash']:
+        monitor_state['repeat_count'] += 1
+    else:
+        monitor_state['repeat_count'] = 0
+    monitor_state['last_content_hash'] = content_hash
 
 def load_state():
     """Load persistent state from state.json"""
@@ -310,6 +354,8 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.get_health()
         elif self.path == '/api/pending_actions':
             self.get_pending_actions()
+        elif self.path == '/api/metrics':
+            self.get_metrics()
         elif self.path.startswith('/api/logs'):
             self.get_logs()
         elif self.path.startswith('/api/conversation'):
@@ -358,20 +404,35 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     
     def send_message(self, data):
         """Handle /api/send_message endpoint"""
-        global messages, pending_actions, next_action_id, yes_all_policy, next_message_id, seen_message_ids
+        global messages, pending_actions, next_action_id, yes_all_policy, next_message_id, seen_message_ids, session_active
 
         try:
             # Extract message data
             sender = data.get('sender')
             content = data.get('content', '')
-            role = data.get('role', 'collaborator')
+            role = data.get('role', 'controller')
             intent = data.get('intent', 'message')
             recipient = data.get('recipient')
             last_seen = data.get('last_seen', 'none')
             incoming_id = data.get('id')  # For idempotency check
-            
+
+            rate_limit()
+
             if not content:
                 self.send_json_response(400, {"success": False, "error": "Content is required"})
+                return
+
+            if role not in ALLOWED_ROLES:
+                self.send_json_response(400, {"success": False, "error": "Invalid role"})
+                return
+
+            if intent not in ALLOWED_INTENTS:
+                self.send_json_response(400, {"success": False, "error": "Invalid intent"})
+                return
+
+            expected = current_roles.get((sender or '').lower())
+            if expected and role != expected:
+                self.send_json_response(400, {"success": False, "error": f"Role mismatch for {sender}"})
                 return
 
             # Idempotency check: reject if already processed
@@ -457,9 +518,15 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 valid = append_conversation(message)
                 if valid:
                     messages.append(message)
+                    update_metrics(content)
 
             if not valid:
                 self.send_json_response(400, {"success": False, "error": "Invalid message content"})
+                return
+
+            if monitor_state['message_count'] >= MAX_TURNS or monitor_state['repeat_count'] >= MAX_REPEAT:
+                session_active = False
+                self.send_json_response(429, {"success": False, "error": "Watchdog limit exceeded"})
                 return
 
             # Determine gating for outbound to Claude-B
@@ -522,14 +589,26 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             objective = data.get('objective', '')
             mode = data.get('mode', 'collaborative')
-            roles = data.get('roles', {})
-            
+            roles = {k.lower(): v for k, v in data.get('roles', {}).items()}
+
             if not objective:
                 self.send_json_response(400, {"success": False, "error": "Objective is required"})
                 return
-            
+
+            for r in roles.values():
+                if r not in ALLOWED_ROLES:
+                    self.send_json_response(400, {"success": False, "error": "Invalid role in session"})
+                    return
+
             session_active = True
             valid_message_count = 0
+            current_roles.update(roles)
+            monitor_state['start_time'] = time.time()
+            monitor_state['message_count'] = 0
+            monitor_state['repeat_count'] = 0
+            monitor_state['last_content_hash'] = None
+            monitor_state['last_message_time'] = 0.0
+            monitor_state['backoff'] = 1.0
             
             # Create session info file
             session_info = {
@@ -714,6 +793,19 @@ class AIBridgeHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_response(200, status)
         except Exception as e:
             self.send_json_response(500, {'error': str(e)})
+
+    def get_metrics(self):
+        """Expose real-time metrics for monitoring panel"""
+        now = time.time()
+        duration = max(now - monitor_state['start_time'], 1)
+        mpm = monitor_state['message_count'] / (duration / 60)
+        metrics = {
+            'message_count': monitor_state['message_count'],
+            'messages_per_minute': round(mpm, 2),
+            'repeat_count': monitor_state['repeat_count'],
+            'backoff': monitor_state['backoff']
+        }
+        self.send_json_response(200, metrics)
 
     def get_logs(self):
         """Return tail of project log as text/plain"""

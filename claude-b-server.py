@@ -18,6 +18,7 @@ import random
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
+import hashlib
 
 # Fix encoding for Windows console
 if os.name == 'nt':
@@ -51,9 +52,47 @@ agent_state = {
     'current_iteration': 0,
     'project_files': {},
     'execution_results': {},
-    'role': 'implementer',
+    'role': 'executor',
     'last_message_id': 0
 }
+
+# Rate limiting and metrics for watchdog
+BASE_DELAY = 1.0
+BACKOFF_MULTIPLIER = 2.0
+MAX_BACKOFF = 16.0
+MAX_TURNS = 100
+MAX_REPEAT = 5
+ALLOWED_ROLES = {'controller', 'executor'}
+ALLOWED_INTENTS = {'plan', 'design', 'code', 'review', 'test', 'done', 'manual', 'message'}
+
+monitor_state = {
+    'start_time': time.time(),
+    'message_count': 0,
+    'repeat_count': 0,
+    'last_content_hash': None,
+    'last_message_time': 0.0,
+    'backoff': 1.0
+}
+
+def rate_limit():
+    now = time.time()
+    required = BASE_DELAY * monitor_state['backoff']
+    elapsed = now - monitor_state['last_message_time']
+    if elapsed < required:
+        time.sleep(required - elapsed)
+        monitor_state['backoff'] = min(monitor_state['backoff'] * BACKOFF_MULTIPLIER, MAX_BACKOFF)
+    else:
+        monitor_state['backoff'] = 1.0
+    monitor_state['last_message_time'] = time.time()
+
+def update_metrics(content: str):
+    monitor_state['message_count'] += 1
+    content_hash = hashlib.sha256((content or '').encode('utf-8')).hexdigest()
+    if content_hash == monitor_state['last_content_hash']:
+        monitor_state['repeat_count'] += 1
+    else:
+        monitor_state['repeat_count'] = 0
+    monitor_state['last_content_hash'] = content_hash
 
 class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """Claude-B HTTP Request Handler"""
@@ -220,6 +259,8 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 response = self.get_status()
             elif self.path == '/api/messages':
                 response = {'messages': agent_state['messages'][-10:]}  # Last 10 messages
+            elif self.path == '/api/metrics':
+                response = self.get_metrics()
             else:
                 response = {'error': 'Unknown endpoint'}
             
@@ -236,18 +277,35 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     
     def handle_send_message(self, data):
         """Handle message from Claude-B to Claude-A"""
+        rate_limit()
+
+        content = data.get('content', '')
+        intent = data.get('intent', 'code')
+        role = data.get('role', agent_state['role'])
+
+        if role != agent_state['role']:
+            return {'error': 'Role mismatch'}
+        if role not in ALLOWED_ROLES or intent not in ALLOWED_INTENTS:
+            return {'error': 'Invalid role or intent'}
+
         message = {
             'id': agent_state['last_message_id'] + 1,
             'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             'from': 'claude-b',
             'to': 'claude-a',
-            'role': agent_state['role'],
-            'content': data.get('content', ''),
-            'intent': data.get('intent', 'code')
+            'role': role,
+            'content': content,
+            'intent': intent
         }
 
         agent_state['messages'].append(message)
         agent_state['last_message_id'] = message['id']
+        update_metrics(content)
+
+        if monitor_state['message_count'] >= MAX_TURNS or monitor_state['repeat_count'] >= MAX_REPEAT:
+            agent_state['session_active'] = False
+            return {'error': 'Watchdog limit exceeded'}
+
         write_project_log('claude-b', 'info', f"send_message id={message['id']}")
 
         # Write to shared file for Claude-A to read
@@ -259,27 +317,42 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"HTTP forward to Claude-A failed: {e}")
             write_project_log('claude-b', 'warn', f'HTTP forward to A failed: {e}')
-        
+
         return {'success': True, 'message_id': message['id']}
     
     def handle_receive_message(self, data):
         """Handle message received from Claude-A"""
+        rate_limit()
+
+        role = data.get('role', 'controller')
+        intent = data.get('intent', 'plan')
+        content = data.get('content', '')
+
+        if role not in ALLOWED_ROLES or intent not in ALLOWED_INTENTS:
+            return {'error': 'Invalid role or intent'}
+
         message = {
             'id': data.get('id'),
             'timestamp': data.get('timestamp'),
             'from': 'claude-a',
             'to': 'claude-b',
-            'role': data.get('role', 'mentor'),
-            'content': data.get('content', ''),
-            'intent': data.get('intent', 'plan')
+            'role': role,
+            'content': content,
+            'intent': intent
         }
-        
+
         agent_state['messages'].append(message)
+        update_metrics(content)
+
+        if monitor_state['message_count'] >= MAX_TURNS or monitor_state['repeat_count'] >= MAX_REPEAT:
+            agent_state['session_active'] = False
+            return {'error': 'Watchdog limit exceeded'}
+
         write_project_log('claude-b', 'info', 'receive_message from A stored')
-        
+
         # Process the message and potentially auto-respond
         self.process_received_message(message)
-        
+
         return {'success': True, 'processed': True}
     
     def get_status(self):
@@ -292,6 +365,17 @@ class ClaudeBHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             'message_count': len(agent_state['messages']),
             'workspace': str(WORKSPACE_DIR.absolute()),
             'last_message_id': agent_state['last_message_id']
+        }
+
+    def get_metrics(self):
+        now = time.time()
+        duration = max(now - monitor_state['start_time'], 1)
+        mpm = monitor_state['message_count'] / (duration / 60)
+        return {
+            'message_count': monitor_state['message_count'],
+            'messages_per_minute': round(mpm, 2),
+            'repeat_count': monitor_state['repeat_count'],
+            'backoff': monitor_state['backoff']
         }
     
     def write_message_to_claude_a(self, message):
