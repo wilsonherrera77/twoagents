@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific - Workspaces and temporary files
+autonomous_workspace/
+dev_workspace/
+test_workspace/
+test_calc/
+test_comm_workspace/
+test_output/
+test_output_directory/
+
+# Generated projects (keep only as examples, not all)
+generated_project*/
+
+# Temporary and obsolete files
+*.tmp
+*.bak
+*.old
+*_backup*
+*_old*
+*_temp*
+nul
+
+# Logs
+*.log
+logs/
+
+# Results and reports
+results/
+reports/
+
+# Data files
+*.xlsx
+*.csv
+mi_mision_personalizada.csv
+
+# Test files (keep only essential ones)
+test_*.py
+!test_main.py
+
+# Obsolete directories (original motors)
+AgentA_Frontend/
+AgentB_Backend/
+scraping_autonoma/
+
+# Keep these essential files:
+# autonomous_team_system.py
+# developer_agent.py
+# project_manager_agent.py
+# web_interface.py
+# autonomous_cli.py
+# message_contracts_v2.py
+# global_system_prompt.py
+# agent_communication.py
+# role_assignment.py
+# fix_unicode_aggressive.py
+# README.md
+# launch.bat
