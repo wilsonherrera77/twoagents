@@ -74,16 +74,26 @@ Terminal 4: Security Agent (Python Script)
 
 ## 🚀 Uso
 
-### Lanzar Sistema
+### Lanzar Sistema V6 (Claude Terminals)
 
 ```bash
 LAUNCH_V6_CLAUDE_TERMINALS.bat
 ```
 
 **Resultado:**
-- Abre 4 ventanas (3 Claude + 1 Python)
-- Terminal 1 pide objetivo al usuario
+- Abre 6 ventanas con instrucciones
+- TÚ abres Claude Code CLI en cada una: `claude`
+- TÚ copias/pegas el código Python de cada TERMINAL_*.md
+- Los 6 Claudes colaboran con inteligencia REAL
 - Sistema converge automáticamente a enterprise standards
+
+**Los 6 Agentes:**
+1. **Orchestrator (Alex)** - Coordina todo el proyecto
+2. **PM Agent (Morgan)** - Analiza negocio y propone arquitectura
+3. **Dev Agent (Jordan)** - Implementa código funcional
+4. **Security Agent (Jorge)** - Valida OWASP Top 10
+5. **QA Agent (Leidy)** - Tests y coverage >95%
+6. **UX/UI Agent** - Genera interfaces frontend (INNOVACIÓN)
 
 ### Flujo de Trabajo
 
