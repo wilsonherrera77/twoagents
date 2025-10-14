@@ -271,18 +271,19 @@ def execute_claude_agent(role: str, prompt: str, timeout: int = 120) -> Dict:
         # 1. Escribir prompt
         prompt_file.write_text(prompt, encoding='utf-8')
 
-        # 2. Ejecutar claude --print (usando shell para pipe)
-        # En Windows: type prompt.txt | claude --print --output-format json > response.json
-        cmd = f'type "{prompt_file}" | claude --print --output-format json > "{response_file}"'
-
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(agent_dir)
-        )
+        # 2. Ejecutar claude --print (usando stdin cross-platform)
+        # FIX V7.10: Portabilidad Linux/macOS/Windows - No usar comando shell
+        with open(prompt_file, 'r', encoding='utf-8') as stdin_file:
+            with open(response_file, 'w', encoding='utf-8') as stdout_file:
+                result = subprocess.run(
+                    ['claude', '--print', '--output-format', 'json'],
+                    stdin=stdin_file,
+                    stdout=stdout_file,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout,
+                    cwd=str(agent_dir)
+                )
 
         # 3. Esperar a que aparezca response.json
         wait_start = time.time()
