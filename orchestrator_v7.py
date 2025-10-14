@@ -646,14 +646,19 @@ Responde SOLO JSON."""
 
         if not result2["success"]:
             log(ROLE, f"Batch 2 falló: {result2['error']}", "ERROR")
-            return None
+            log(ROLE, "Guardando progreso parcial: Batch 1 completado", "WARN")
+            # FIX V7.9: No perder Batch 1, continuar con progreso parcial
+            batch2_files = []
+            all_files = batch1_files
+            # Skip Batches 3 y 4, ir directo a escribir archivos
+        else:
+            batch2_files = result2.get("response", {}).get("files", [])
+            log(ROLE, f"Batch 2: {len(batch2_files)} archivos generados", "SUCCESS")
 
-        batch2_files = result2.get("response", {}).get("files", [])
-        log(ROLE, f"Batch 2: {len(batch2_files)} archivos generados", "SUCCESS")
-
-        # === BATCH 3: Módulos restantes + Test Skeletons + Docker ===
-        all_modules_list = json.dumps(modules, indent=2)
-        prompt_batch3 = f"""Eres Dev Agent (Alex), desarrollador Python senior.
+            # === BATCH 3: Módulos restantes + Test Skeletons + Docker ===
+            # SOLO ejecutar si Batch 2 fue exitoso
+            all_modules_list = json.dumps(modules, indent=2)
+            prompt_batch3 = f"""Eres Dev Agent (Alex), desarrollador Python senior.
 
 OBJETIVO:
 {objective}
