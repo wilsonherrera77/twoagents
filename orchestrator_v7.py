@@ -273,6 +273,7 @@ def execute_claude_agent(role: str, prompt: str, timeout: int = 120) -> Dict:
 
         # 2. Ejecutar claude --print (usando stdin cross-platform)
         # FIX V7.10: Portabilidad Linux/macOS/Windows - No usar comando shell
+        # FIX V7.10b: Windows necesita shell=True para encontrar .cmd en PATH
         with open(prompt_file, 'r', encoding='utf-8') as stdin_file:
             with open(response_file, 'w', encoding='utf-8') as stdout_file:
                 result = subprocess.run(
@@ -282,7 +283,8 @@ def execute_claude_agent(role: str, prompt: str, timeout: int = 120) -> Dict:
                     stderr=subprocess.PIPE,
                     text=True,
                     timeout=timeout,
-                    cwd=str(agent_dir)
+                    cwd=str(agent_dir),
+                    shell=True  # Necesario en Windows para encontrar .cmd en PATH
                 )
 
         # 3. Esperar a que aparezca response.json
