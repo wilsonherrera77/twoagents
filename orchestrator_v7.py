@@ -263,7 +263,16 @@ def execute_claude_agent(role: str, prompt: str, timeout: int = 120) -> Dict:
 
     # Limpiar respuesta anterior si existe
     if response_file.exists():
-        response_file.unlink()
+        try:
+            response_file.unlink()
+        except PermissionError:
+            # Archivo en uso por otro proceso - intentar renombrar
+            import random
+            backup_name = f"response_backup_{random.randint(1000,9999)}.json"
+            try:
+                response_file.rename(response_file.parent / backup_name)
+            except:
+                pass  # Si falla, continuar de todos modos
 
     try:
         log(ROLE, f"Ejecutando Claude Agent ({role}) via filesystem...", "INFO")
