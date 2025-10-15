@@ -397,8 +397,38 @@ def execute_claude_agent(role: str, prompt: str, timeout: int = 120) -> Dict:
         except json.JSONDecodeError as e:
             log(ROLE, f"No se pudo extraer JSON embedded: {e}", "WARN")
 
-        # Estrategia 4: FALLO - retornar error en lugar de success=True
-        log(ROLE, "No se pudo parsear JSON de ninguna forma", "ERROR")
+        # Estrategia 4: Regex para JSON dentro de markdown (para iteraciones 2+)
+        import re
+        try:
+            # Buscar patrón ```json ... ``` o ``` ... ``` con JSON válido
+            json_pattern = r'```(?:json)?\s*\n(.*?)\n```'
+            matches = re.findall(json_pattern, result_text, re.DOTALL)
+
+            for match in matches:
+                try:
+                    # Intentar parsear cada match
+                    parsed = json.loads(match.strip())
+
+                    # Validar que sea el JSON que esperamos (tiene campo "role")
+                    if isinstance(parsed, dict) and "role" in parsed:
+                        duration = time.time() - start_time
+                        log(ROLE, f"Claude Agent ({role}) respondió con JSON en markdown (Estrategia 4) en {duration:.1f}s", "SUCCESS")
+
+                        return {
+                            "success": True,
+                            "response": parsed,
+                            "raw": result_text,
+                            "duration_sec": duration
+                        }
+                except json.JSONDecodeError:
+                    continue  # Probar siguiente match
+
+            log(ROLE, "No se encontró JSON válido en bloques markdown", "WARN")
+        except Exception as e:
+            log(ROLE, f"Error en regex markdown extraction: {e}", "WARN")
+
+        # Estrategia 5: FALLO - retornar error en lugar de success=True
+        log(ROLE, "No se pudo parsear JSON de ninguna forma (probadas 5 estrategias)", "ERROR")
         return {
             "success": False,
             "error": "No valid JSON found in response",
