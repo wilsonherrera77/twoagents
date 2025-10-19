@@ -47,6 +47,7 @@ import sys
 import subprocess
 import json
 import time
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional, List
@@ -250,6 +251,9 @@ def execute_claude_agent(role: str, prompt: str, timeout: int = 120) -> Dict:
     """
     start_time = time.time()
 
+    # FIX V7.12: UUID-based filenames para concurrencia
+    session_uuid = str(uuid.uuid4())[:8]  # Usar solo 8 chars para legibilidad
+
     # Directorios de comunicación
     agent_dir = PROJECT_ROOT / ".agents" / role
     inbox_dir = agent_dir / "inbox"
@@ -258,21 +262,20 @@ def execute_claude_agent(role: str, prompt: str, timeout: int = 120) -> Dict:
     inbox_dir.mkdir(parents=True, exist_ok=True)
     outbox_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt_file = inbox_dir / "prompt.txt"
-    response_file = outbox_dir / "response.json"
+    prompt_file = inbox_dir / f"prompt_{session_uuid}.txt"
+    response_file = outbox_dir / f"response_{session_uuid}.json"
 
-    # Limpiar respuesta anterior si existe
+    # FIX V7.12: Con UUID único, no debería haber conflictos
+    # Pero mantener cleanup por si acaso (edge case: UUID collision)
     if response_file.exists():
         try:
             response_file.unlink()
         except PermissionError:
-            # Archivo en uso por otro proceso - intentar renombrar
-            import random
-            backup_name = f"response_backup_{random.randint(1000,9999)}.json"
-            try:
-                response_file.rename(response_file.parent / backup_name)
-            except:
-                pass  # Si falla, continuar de todos modos
+            # Muy improbable con UUID, pero manejar defensivamente
+            log(ROLE, f"WARNING: Could not delete {response_file.name}, UUID collision?", "WARN")
+            # Generar nuevo UUID y retry
+            session_uuid = str(uuid.uuid4())[:8]
+            response_file = outbox_dir / f"response_{session_uuid}.json"
 
     try:
         log(ROLE, f"Ejecutando Claude Agent ({role}) via filesystem...", "INFO")
