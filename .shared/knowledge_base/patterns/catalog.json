@@ -1,0 +1,126 @@
+{
+  "rest_api_simple": {
+    "name": "Simple REST API",
+    "complexity": "SIMPLE",
+    "description": "Basic CRUD API without authentication",
+    "tech_stack": [
+      "FastAPI",
+      "SQLite",
+      "Pydantic"
+    ],
+    "files": [
+      "main.py",
+      "models.py",
+      "database.py",
+      "config.py"
+    ],
+    "time_estimate": "2-4 hours"
+  },
+  "rest_api_jwt": {
+    "name": "REST API with JWT Authentication",
+    "complexity": "MEDIUM",
+    "description": "CRUD API with JWT auth, refresh tokens",
+    "tech_stack": [
+      "FastAPI",
+      "PostgreSQL",
+      "JWT",
+      "pytest"
+    ],
+    "files": [
+      "main.py",
+      "config.py",
+      "database.py",
+      "models/user.py",
+      "models/task.py",
+      "auth/jwt.py",
+      "auth/middleware.py",
+      "routes/auth.py",
+      "routes/tasks.py",
+      "tests/test_auth.py",
+      "tests/test_tasks.py"
+    ],
+    "time_estimate": "1-2 days",
+    "security": [
+      "Input validation",
+      "Rate limiting",
+      "Password hashing"
+    ]
+  },
+  "multi_tenant_saas": {
+    "name": "Multi-Tenant SaaS Platform",
+    "complexity": "ENTERPRISE",
+    "description": "Full multi-tenant platform with tenant isolation",
+    "tech_stack": [
+      "FastAPI",
+      "PostgreSQL",
+      "Redis",
+      "Docker",
+      "Stripe",
+      "Celery",
+      "pytest"
+    ],
+    "files": [
+      "main.py",
+      "config.py",
+      "database.py",
+      "models/tenant.py",
+      "models/user.py",
+      "models/product.py",
+      "middleware/tenant_isolation.py",
+      "middleware/auth.py",
+      "services/tenant_service.py",
+      "services/payment_service.py",
+      "api/auth.py",
+      "api/products.py",
+      "api/admin.py",
+      "tests/test_tenant.py",
+      "tests/test_products.py",
+      "docker-compose.yml",
+      "Dockerfile",
+      "requirements.txt"
+    ],
+    "time_estimate": "2-3 weeks MVP",
+    "security": [
+      "Tenant isolation",
+      "OWASP Top 10",
+      "PCI-DSS considerations"
+    ]
+  },
+  "web_scraper": {
+    "name": "Web Scraper with Anti-Detection",
+    "complexity": "MEDIUM",
+    "description": "Robust web scraper with anti-bot measures",
+    "tech_stack": [
+      "Requests",
+      "BeautifulSoup",
+      "Selenium",
+      "SQLite"
+    ],
+    "files": [
+      "main.py",
+      "scraper.py",
+      "parser.py",
+      "storage.py",
+      "config.py",
+      "tests.py"
+    ],
+    "time_estimate": "1-2 days"
+  },
+  "game_simple": {
+    "name": "Simple 2D Game",
+    "complexity": "SIMPLE",
+    "description": "Basic game with player input and collision",
+    "tech_stack": [
+      "Pygame",
+      "Python standard lib"
+    ],
+    "files": [
+      "main.py",
+      "game_engine.py",
+      "player.py",
+      "entities.py",
+      "config.py"
+    ],
+    "time_estimate": "4-8 hours"
+  }
+}

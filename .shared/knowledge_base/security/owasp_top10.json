@@ -1,0 +1,49 @@
+{
+  "owasp_top5": [
+    {
+      "id": "A01:2021",
+      "name": "Broken Access Control",
+      "mitigation": [
+        "Implement role-based access control (RBAC)",
+        "Deny by default",
+        "Log access control failures"
+      ]
+    },
+    {
+      "id": "A02:2021",
+      "name": "Cryptographic Failures",
+      "mitigation": [
+        "Use TLS for data in transit",
+        "Hash passwords with bcrypt/argon2",
+        "Never store secrets in code"
+      ]
+    },
+    {
+      "id": "A03:2021",
+      "name": "Injection",
+      "mitigation": [
+        "Use parameterized queries (ORM)",
+        "Validate and sanitize all inputs",
+        "Escape special characters"
+      ]
+    },
+    {
+      "id": "A05:2021",
+      "name": "Security Misconfiguration",
+      "mitigation": [
+        "Remove default credentials",
+        "Disable unnecessary features",
+        "Keep dependencies updated"
+      ]
+    },
+    {
+      "id": "A07:2021",
+      "name": "Identification and Authentication Failures",
+      "mitigation": [
+        "Implement MFA where possible",
+        "Use secure session management",
+        "Rate limit authentication attempts"
+      ]
+    }
+  ]
+}

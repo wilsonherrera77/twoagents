@@ -1,0 +1,142 @@
+{
+  "version": "1.0",
+  "description": "Enterprise-grade criteria for code validation",
+  "profiles": {
+    "fullstack": {
+      "description": "All agents are fullstack developers",
+      "required_skills": [
+        "frontend (HTML/CSS/JS/React/Vue)",
+        "backend (Python/Node/FastAPI/Express)",
+        "database (SQL/NoSQL)",
+        "DevOps (Docker/CI-CD)",
+        "testing (unit/integration/e2e)"
+      ]
+    }
+  },
+  "code_quality": {
+    "no_todos": {
+      "rule": "Code must not contain TODO, FIXME, or placeholder comments",
+      "severity": "critical",
+      "action": "reject"
+    },
+    "100_percent_functional": {
+      "rule": "All features must be fully implemented and working",
+      "severity": "critical",
+      "action": "reject"
+    },
+    "tests_required": {
+      "rule": "Must have tests with >90% coverage",
+      "severity": "critical",
+      "action": "reject"
+    },
+    "modular_design": {
+      "rule": "Code must be modular with clear separation of concerns",
+      "severity": "high",
+      "action": "warn"
+    },
+    "clean_code": {
+      "rule": "Follow PEP8/ESLint, proper naming, no code smells",
+      "severity": "high",
+      "action": "warn"
+    }
+  },
+  "git_workflow": {
+    "enabled": true,
+    "commit_per_phase": true,
+    "branches": {
+      "mvp": "feat/mvp",
+      "production": "feat/production-ready",
+      "enterprise": "main"
+    },
+    "commit_message_format": "[PHASE] {phase_name}: {description}"
+  },
+  "phased_development": {
+    "phases": [
+      {
+        "name": "MVP",
+        "description": "Minimum Viable Product - Core functionality only",
+        "duration_estimate": "2-4 hours",
+        "deliverables": [
+          "Core features working",
+          "Basic tests (>70% coverage)",
+          "README with setup instructions",
+          "No TODOs or placeholders"
+        ],
+        "validation": {
+          "code_runs": true,
+          "tests_pass": true,
+          "no_placeholders": true
+        }
+      },
+      {
+        "name": "PRODUCTION",
+        "description": "Production-ready - Security, performance, error handling",
+        "duration_estimate": "1-2 days",
+        "deliverables": [
+          "OWASP Top 5 mitigated",
+          "Error handling + logging",
+          "Performance optimization",
+          "API documentation",
+          "Tests >85% coverage"
+        ],
+        "validation": {
+          "security_scan_pass": true,
+          "load_test_pass": true,
+          "error_handling_complete": true
+        }
+      },
+      {
+        "name": "ENTERPRISE",
+        "description": "Enterprise-grade - Scalability, observability, compliance",
+        "duration_estimate": "1-2 weeks",
+        "deliverables": [
+          "Horizontal scaling ready",
+          "Monitoring + metrics (Prometheus/Grafana)",
+          "CI/CD pipeline",
+          "Multi-environment config (dev/staging/prod)",
+          "Compliance docs (GDPR/SOC2 if applicable)",
+          "Tests >95% coverage",
+          "Full API docs (OpenAPI/Swagger)"
+        ],
+        "validation": {
+          "scalability_tested": true,
+          "monitoring_enabled": true,
+          "cicd_configured": true,
+          "compliance_reviewed": true
+        }
+      }
+    ]
+  },
+  "iteration_rules": {
+    "max_iterations_per_phase": 5,
+    "escalation_on_deadlock": {
+      "threshold_cycles": 3,
+      "actions": [
+        "web_search",
+        "agent_dialogue",
+        "architecture_pivot"
+      ]
+    },
+    "creativity_boost": {
+      "web_search_enabled": true,
+      "search_triggers": [
+        "implementation stuck for >2 iterations",
+        "test coverage <90% after 3 attempts",
+        "security scan fails repeatedly"
+      ]
+    }
+  },
+  "conversation_logging": {
+    "enabled": true,
+    "log_level": "detailed",
+    "include": [
+      "message_content",
+      "reasoning",
+      "code_diffs",
+      "test_results",
+      "validation_outcomes"
+    ],
+    "output_format": "markdown",
+    "output_dir": "dialogue_logs"
+  }
+}
