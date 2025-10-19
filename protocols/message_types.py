@@ -72,11 +72,8 @@ class BaseMessage:
         return cls(**data)
 
 
-@dataclass
 class ObjectiveMessage(BaseMessage):
     """Mensaje de objetivo (Orchestrator → PM)"""
-    objective: str
-    constraints: Optional[Dict] = None
 
     def __init__(self, objective: str, iteration: int = 1, constraints: Optional[Dict] = None):
         super().__init__(
@@ -88,13 +85,8 @@ class ObjectiveMessage(BaseMessage):
         self.constraints = constraints or {}
 
 
-@dataclass
 class ProposalMessage(BaseMessage):
     """Mensaje de propuesta arquitectónica (PM → Dev)"""
-    action: str  # "PROPOSE" | "ADJUST" | "AGREE"
-    architecture: Dict
-    reasoning: str
-    response_to_dev: Optional[List[str]] = None
 
     def __init__(
         self,
@@ -115,13 +107,8 @@ class ProposalMessage(BaseMessage):
         self.response_to_dev = response_to_dev or []
 
 
-@dataclass
 class EvaluationMessage(BaseMessage):
     """Mensaje de evaluación técnica (Dev → PM)"""
-    action: str  # "ACCEPT" | "COUNTER"
-    concerns: List[str]
-    alternative_architecture: Optional[Dict] = None
-    reasoning: Optional[str] = None
 
     def __init__(
         self,
@@ -142,14 +129,8 @@ class EvaluationMessage(BaseMessage):
         self.reasoning = reasoning
 
 
-@dataclass
 class ImplementationMessage(BaseMessage):
     """Mensaje de implementación (Dev → Orchestrator)"""
-    status: str  # "implemented" | "improved"
-    output_dir: str
-    files: List[Dict]  # [{"path": "...", "content": "..."}]
-    fixes_applied: Optional[List[str]] = None
-    notes: Optional[str] = None
 
     def __init__(
         self,
@@ -172,12 +153,8 @@ class ImplementationMessage(BaseMessage):
         self.notes = notes
 
 
-@dataclass
 class InsightMessage(BaseMessage):
     """Mensaje de insights (Discovery Motor → Orchestrator)"""
-    insights: List[Dict]  # [{"type": "...", "severity": "...", "issue": "...", "suggestion": "..."}]
-    recommended_actions: List[str]
-    analysis_summary: Optional[str] = None
 
     def __init__(
         self,
@@ -196,15 +173,8 @@ class InsightMessage(BaseMessage):
         self.analysis_summary = analysis_summary
 
 
-@dataclass
 class ValidationFeedbackMessage(BaseMessage):
     """Mensaje de feedback de validación (Orchestrator → Dev)"""
-    security_score: float
-    qa_score: float
-    security_issues: List[str]
-    qa_issues: List[str]
-    critical_issues: List[str]
-    high_priority: List[str]
 
     def __init__(
         self,
@@ -229,15 +199,8 @@ class ValidationFeedbackMessage(BaseMessage):
         self.high_priority = high_priority
 
 
-@dataclass
 class ConvergenceMessage(BaseMessage):
     """Mensaje de convergencia final"""
-    success: bool
-    security_score: float
-    qa_score: float
-    output_dir: str
-    total_iterations: int
-    reason: Optional[str] = None
 
     def __init__(
         self,
