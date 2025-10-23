@@ -1,0 +1,26 @@
+{
+  "id": "msg_1760400021834",
+  "from": "orchestrator",
+  "to": "pm",
+  "type": "TASK_ASSIGNMENT",
+  "priority": "high",
+  "timestamp": "2025-10-13T19:00:21.834834",
+  "content": {
+    "objective": "diseÃ±ar un mÃ³dulo de descubrimiento y vigilancia de eventos a escala global que construya un grafo temporal de posts/URLs/entidades con resoluciÃ³n de identidad multimodal, detecciÃ³n de campaÃ±as coordinadas y atribuciÃ³n de fuente original; incluye geocodificaciÃ³n, deduplicaciÃ³n MinHash, indexaciÃ³n hÃ­brida (BM25+vectores) y fact chain con verificaciÃ³n cruzada; expone consultas streaming, alertas y resÃºmenes con citaciÃ³n verificable; metas: recall de eventos etiquetados mayor o igual 90% en menor o igual 60 min, AUC mayor o igual 0.92 para coordinaciÃ³n inorgÃ¡nica, acierto de geocodificaciÃ³n a nivel municipio mayor o igual 85%, latencia ingesta a alerta menor o igual 45 s a 5k posts/s.",
+    "phase": "ENTERPRISE",
+    "iteration": 1,
+    "requirements": [
+      "JWT authentication",
+      "SQLAlchemy ORM",
+      "Alembic migrations",
+      "Tests >95% coverage",
+      "Prometheus metrics",
+      "Structured logging",
+      "Rate limiting",
+      "Docker + CI/CD"
+    ],
+    "fullstack_required": true
+  },
+  "conversation_id": "conv_ce6c501a",
+  "requires_response": true
+}
