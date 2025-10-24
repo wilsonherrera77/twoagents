@@ -1,670 +1,377 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Dev Agent V10 - Developer con generación de código
-===================================================
+"""Dev Agent V10 - Genera código usando un servicio LLM local."""
 
-Responsabilidades:
-- Leer arquitectura propuesta por PM
-- Generar código Python completo
-- Validar sintaxis con ast.parse()
-- Crear estructura de proyecto
-- Escribir todos los archivos
-
-Modo Híbrido:
-- Lee arquitectura de filesystem
-- En producción: Espera que Claude (otro terminal) genere código
-- En test: Usa templates simples
-"""
-
-import sys
+from __future__ import annotations
 
 import ast
 import json
+import threading
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Dict, List, Optional, Sequence
 
-# Imports de infraestructura V10
-from V10.utils import create_logger
-from V10.protocols import Architecture, Implementation
+import requests
+
+from V10.core.message_bus import FileMessageBus
+from V10.utils import create_logger, ensure_directory, get_runtime_root
 
 
 class DevAgentV10:
-    """
-    Developer Agent V10 - Genera código basado en arquitectura.
+    """Agente de desarrollo que solicita código al servicio LLM local."""
 
-    Responsabilidades:
-    1. Leer arquitectura del PM
-    2. Generar código Python para cada módulo
-    3. Validar sintaxis
-    4. Crear estructura de proyecto
-    5. Escribir archivos
-    """
+    AGENT_NAME = "dev_agent"
 
-    def __init__(self, workspace_dir: str = "workspace"):
-        """
-        Inicializa Dev Agent V10.
+    def __init__(
+        self,
+        message_bus: FileMessageBus,
+        llm_endpoint: str = "http://localhost:5000/generate",
+    ) -> None:
+        self.message_bus = message_bus
+        self.llm_endpoint = llm_endpoint
+        self.logger = create_logger("DEV_AGENT")
+        self.project_root = ensure_directory(get_runtime_root() / "projects")
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        self.projects: Dict[str, Dict[str, object]] = {}
 
-        Args:
-            workspace_dir: Directorio donde crear proyectos
-        """
-        self.logger = create_logger("DEV_AGENT_V10")
-        self.workspace = Path(workspace_dir)
-        self.workspace.mkdir(parents=True, exist_ok=True)
+    # ------------------------------------------------------------------
+    # Ciclo de vida
+    # ------------------------------------------------------------------
+    def start(self) -> threading.Thread:
+        if self.thread and self.thread.is_alive():
+            return self.thread
+        self.running = True
+        self.thread = threading.Thread(target=self.run, name="DevAgentV10", daemon=True)
+        self.thread.start()
+        self.logger.set_state("RUNNING")
+        return self.thread
 
-        self.logger.set_state("INITIALIZED")
-        self.logger.info("Dev Agent V10 initialized")
-        self.logger.info(f"Workspace: {self.workspace.absolute()}")
+    def stop(self) -> None:
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2)
+            self.logger.info("Dev agent detenido")
 
-    def generate_project(self, architecture: Architecture, project_name: str = None) -> Optional[Implementation]:
-        """
-        Genera proyecto completo basado en arquitectura.
+    # ------------------------------------------------------------------
+    # Bucle principal
+    # ------------------------------------------------------------------
+    def run(self) -> None:
+        while self.running:
+            message = self.message_bus.receive(self.AGENT_NAME, timeout=1.0)
+            if message is None:
+                continue
 
-        Args:
-            architecture: Arquitectura propuesta por PM
-            project_name: Nombre del proyecto (auto-generado si None)
+            payload = message.payload
+            action = payload.get("action")
 
-        Returns:
-            Implementation object si exitoso, None si falla
-        """
-        self.logger.set_state("GENERATING")
-        start_time = datetime.now()
+            if action == "fix_security":
+                fixed = self._handle_security_fix(payload)
+                self._reply(message, {"fixed": fixed})
+                continue
 
-        # Crear directorio de proyecto
-        if not project_name:
-            project_name = f"project_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            if action == "improve_quality":
+                improved = self._handle_quality_improvement(payload)
+                self._reply(message, {"improved": improved})
+                continue
 
-        project_dir = self.workspace / project_name
-        self.logger.set_task(f"Generating project: {project_name}")
+            self.logger.info("Recibida especificación para generación de proyecto")
+            try:
+                project_path = payload.get("project_path")
+                project_dir = self._prepare_project_dir(project_path, payload.get("objective"))
+                spec = payload.get("spec", {})
+                generated_files = self._generate_modules(project_dir, spec)
+                extra_files = self._create_support_files(project_dir, spec)
+                all_files = generated_files + extra_files
 
-        try:
-            # Crear estructura de directorios
-            self._create_project_structure(project_dir)
-
-            # Generar código para cada módulo
-            files_created = []
-
-            # Generar módulos principales
-            for module in architecture.proposed_modules:
-                file_path = self._generate_module(
-                    project_dir,
-                    module,
-                    architecture
-                )
-                if file_path:
-                    files_created.append(str(file_path.relative_to(project_dir)))
-
-            # Generar archivos de configuración
-            config_files = self._generate_config_files(project_dir, architecture)
-            files_created.extend(config_files)
-
-            # Generar README
-            readme_path = self._generate_readme(project_dir, architecture)
-            if readme_path:
-                files_created.append(str(readme_path.relative_to(project_dir)))
-
-            # Generar requirements.txt
-            req_path = self._generate_requirements(project_dir, architecture)
-            if req_path:
-                files_created.append(str(req_path.relative_to(project_dir)))
-
-            duration = self.logger.measure_time("Project generation", start_time)
-
-            self.logger.success(
-                f"Project generated successfully",
-                {
-                    "project": project_name,
-                    "files_count": len(files_created),
-                    "duration": duration
+                self.projects[str(project_dir)] = {
+                    "spec": spec,
+                    "files": all_files,
                 }
-            )
 
-            self.logger.set_state("SUCCESS")
+                result_payload = {
+                    "status": "SUCCESS",
+                    "project_path": str(project_dir),
+                    "files": all_files,
+                    "spec": spec,
+                }
 
-            return Implementation(
-                project_dir=str(project_dir.absolute()),
-                files_created=files_created,
-                files_count=len(files_created),
-                technologies=architecture.technologies,
-                timestamp=datetime.now().isoformat()
-            )
+                self.message_bus.send(
+                    sender=self.AGENT_NAME,
+                    recipient="orchestrator",
+                    payload=result_payload,
+                    conversation_id=message.conversation_id,
+                    in_reply_to=message.message_id,
+                )
 
-        except Exception as e:
-            self.logger.error(
-                "Project generation failed",
-                {"error": str(e), "type": type(e).__name__}
-            )
-            self.logger.set_state("FAILED")
-            return None
+                # Disparar análisis de seguridad inicial
+                self.message_bus.send(
+                    sender=self.AGENT_NAME,
+                    recipient="security_agent",
+                    payload={
+                        "project_path": str(project_dir),
+                        "trigger": "initial",
+                    },
+                    conversation_id=message.conversation_id,
+                )
 
-    def _create_project_structure(self, project_dir: Path):
-        """Crea estructura de directorios del proyecto."""
-        self.logger.info(f"Creating project structure: {project_dir.name}")
+                self.logger.success("Proyecto generado", {"project_path": str(project_dir)})
+            except Exception as exc:
+                self.logger.error("Error generando proyecto", {"error": str(exc)})
+                failure_payload = {
+                    "status": "ERROR",
+                    "error": str(exc),
+                }
+                self.message_bus.send(
+                    sender=self.AGENT_NAME,
+                    recipient="orchestrator",
+                    payload=failure_payload,
+                    conversation_id=message.conversation_id,
+                    in_reply_to=message.message_id,
+                )
 
-        # Crear directorios principales
-        dirs = [
-            project_dir,
-            project_dir / "src",
-            project_dir / "tests",
-            project_dir / "docs",
-            project_dir / "config"
-        ]
+    # ------------------------------------------------------------------
+    # Generación de código
+    # ------------------------------------------------------------------
+    def _generate_modules(self, project_dir: Path, spec: Dict[str, object]) -> List[str]:
+        modules = spec.get("modules", [])
+        generated_files: List[str] = []
 
-        for dir_path in dirs:
-            dir_path.mkdir(parents=True, exist_ok=True)
+        for module_entry in modules:
+            module_spec = self._normalize_module(module_entry)
+            module_name = module_spec["name"]
+            code = self._generate_module_code(module_name, module_spec, spec)
+            file_path = self._write_module(project_dir, module_name, code)
+            generated_files.append(str(file_path.relative_to(project_dir)))
 
-        self.logger.success(f"Created {len(dirs)} directories")
+        return generated_files
 
-    def _generate_module(self, project_dir: Path, module_name: str, architecture: Architecture) -> Optional[Path]:
-        """
-        Genera código para un módulo.
+    def _generate_module_code(
+        self,
+        module_name: str,
+        module_spec: Dict[str, object],
+        project_spec: Dict[str, object],
+        extra_context: Optional[str] = None,
+    ) -> str:
+        """Genera código Python usando el servicio LLM local."""
 
-        En modo híbrido, esto sería reemplazado por código generado por Claude.
-        Por ahora, genera templates básicos.
-        """
-        self.logger.info(f"Generating module: {module_name}")
+        dependencies = project_spec.get("dependencies", [])
+        prompt = f"""Genera código Python profesional para este módulo:
 
-        # Determinar tipo de módulo por nombre
-        if "auth" in module_name.lower() or "jwt" in module_name.lower():
-            code = self._generate_auth_module(module_name, architecture)
-        elif "api" in module_name.lower() or "main" in module_name.lower():
-            code = self._generate_api_module(module_name, architecture)
-        elif "model" in module_name.lower() or "database" in module_name.lower():
-            code = self._generate_model_module(module_name, architecture)
-        elif "config" in module_name.lower():
-            code = self._generate_config_module(module_name, architecture)
-        else:
-            code = self._generate_generic_module(module_name, architecture)
+PROYECTO: {project_spec.get('project_type', 'Unknown')}
+ARQUITECTURA: {project_spec.get('architecture', 'N/A')}
 
-        # Validar sintaxis
+MÓDULO: {module_name}
+ESPECIFICACIONES DEL MÓDULO: {json.dumps(module_spec, indent=2, ensure_ascii=False)}
+DEPENDENCIAS DISPONIBLES: {', '.join(dependencies)}
+"""
+        if extra_context:
+            prompt += f"\nCONTEXTO ADICIONAL:\n{extra_context}\n"
+
+        prompt += """
+REQUERIMIENTOS ESTRICTOS:
+1. Incluye docstrings completos en español
+2. Usa type hints en todas las funciones
+3. Maneja errores con try/except apropiados
+4. Código listo para producción
+5. Sigue PEP 8
+6. Incluye logging donde sea relevante
+
+FORMATO DE SALIDA:
+- Genera SOLO código Python puro
+- Sin bloques markdown (```python)
+- Sin explicaciones adicionales
+- Código debe ser sintácticamente válido
+
+Genera el archivo {module_name}.py completo:
+"""
+
         try:
-            ast.parse(code)
-            self.logger.success(f"Module syntax validated: {module_name}")
-        except SyntaxError as e:
-            self.logger.error(
-                f"Syntax error in {module_name}",
-                {"error": str(e), "line": e.lineno}
+            response = requests.post(
+                self.llm_endpoint,
+                json={"prompt": prompt},
+                timeout=60,
             )
-            return None
+            response.raise_for_status()
+            result = response.json()
+            code = result["response"].strip()
+            code = self._clean_code_blocks(code)
+            self._validate_syntax(code)
+            self.logger.info("Código generado para módulo", {"module": module_name})
+            return code
+        except requests.RequestException as exc:
+            self.logger.error("Error conectando con servicio LLM", {"error": str(exc)})
+            return self._generate_fallback_code(module_name)
+        except (SyntaxError, ValueError) as exc:
+            self.logger.error("Código inválido generado por LLM", {"error": str(exc)})
+            return self._generate_fallback_code(module_name)
 
-        # Escribir archivo
-        file_path = project_dir / "src" / module_name
+    def _clean_code_blocks(self, code: str) -> str:
+        for marker in ("```python\n", "```python", "```", "``\n"):
+            code = code.replace(marker, "")
+        return code.strip()
+
+    def _validate_syntax(self, code: str) -> None:
+        ast.parse(code)
+
+    def _generate_fallback_code(self, module_name: str) -> str:
+        return f'''"""
+Módulo {module_name} - Generado en modo fallback.
+"""
+
+import logging
+
+
+def main() -> None:
+    """Función principal del módulo."""
+    logging.basicConfig(level=logging.INFO)
+    logging.info("Módulo {module_name} - Servicio LLM no disponible")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    # ------------------------------------------------------------------
+    # Manejo de acciones correctivas
+    # ------------------------------------------------------------------
+    def _handle_security_fix(self, payload: Dict[str, object]) -> bool:
+        project_path = payload.get("project_path")
+        issues: Sequence[str] = payload.get("issues", [])  # type: ignore[assignment]
+        if not project_path or str(project_path) not in self.projects:
+            return False
+        spec = self.projects[str(project_path)].get("spec")
+        if not isinstance(spec, dict):
+            return False
+        targets = self._extract_targets_from_messages(issues)
+        context = "\n".join(f"- {issue}" for issue in issues)
+        return self._regenerate_modules(str(project_path), spec, targets, context)
+
+    def _handle_quality_improvement(self, payload: Dict[str, object]) -> bool:
+        project_path = payload.get("project_path")
+        suggestions: Sequence[str] = payload.get("suggestions", [])  # type: ignore[assignment]
+        if not project_path or str(project_path) not in self.projects:
+            return False
+        spec = self.projects[str(project_path)].get("spec")
+        if not isinstance(spec, dict):
+            return False
+        targets = self._extract_targets_from_messages(suggestions)
+        context = "\n".join(f"- {suggestion}" for suggestion in suggestions)
+        return self._regenerate_modules(str(project_path), spec, targets, context)
+
+    def _regenerate_modules(
+        self,
+        project_path: str,
+        spec: Dict[str, object],
+        targets: Sequence[str],
+        context: str,
+    ) -> bool:
+        project_dir = Path(project_path)
+        modules = spec.get("modules", [])
+        if not modules:
+            return False
+
+        normalized_targets = {target for target in targets if target}
+        if not normalized_targets:
+            normalized_targets = {self._normalize_module(entry)["name"] for entry in modules}
+
+        updated = False
+        for module_entry in modules:
+            module_spec = self._normalize_module(module_entry)
+            module_name = module_spec["name"]
+            if module_name not in normalized_targets:
+                continue
+            code = self._generate_module_code(module_name, module_spec, spec, extra_context=context)
+            file_path = self._write_module(project_dir, module_name, code)
+            updated = True
+            rel_path = str(file_path.relative_to(project_dir))
+            if project_path in self.projects:
+                files_obj = self.projects[project_path].get("files", [])
+                if isinstance(files_obj, list) and rel_path not in files_obj:
+                    files_obj.append(rel_path)
+
+        return updated
+
+    def _extract_targets_from_messages(self, messages: Sequence[str]) -> List[str]:
+        targets: List[str] = []
+        for message in messages:
+            if not message:
+                continue
+            parts = message.split()
+            for part in parts:
+                if part.endswith(".py"):
+                    targets.append(part.replace(".py", ""))
+        return targets
+
+    # ------------------------------------------------------------------
+    # Utilidades de escritura
+    # ------------------------------------------------------------------
+    def _write_module(self, project_dir: Path, module_name: str, code: str) -> Path:
+        file_name = module_name if module_name.endswith(".py") else f"{module_name}.py"
+        file_path = project_dir / file_name
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(code)
-
-        self.logger.success(f"Module written: {module_name}")
+        file_path.write_text(code, encoding="utf-8")
         return file_path
 
-    def _generate_auth_module(self, module_name: str, architecture: Architecture) -> str:
-        """Genera módulo de autenticación JWT."""
-        return '''#!/usr/bin/env python3
-"""
-Authentication module with JWT support.
-"""
-
-import os
-import jwt
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
-
-
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-    """
-    Create JWT access token.
-
-    Args:
-        data: Payload data
-        expires_delta: Token expiration time
-
-    Returns:
-        Encoded JWT token
-    """
-    to_encode = data.copy()
-
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-    return encoded_jwt
-
-
-def verify_token(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Verify and decode JWT token.
-
-    Args:
-        token: JWT token
-
-    Returns:
-        Decoded payload or None if invalid
-    """
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        return None
-    except jwt.JWTError:
-        return None
-
-
-def hash_password(password: str) -> str:
-    """Hash password using bcrypt."""
-    import bcrypt
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password against hash."""
-    import bcrypt
-    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
-'''
-
-    def _generate_api_module(self, module_name: str, architecture: Architecture) -> str:
-        """Genera módulo API principal."""
-        framework = architecture.technologies.get("framework", "FastAPI")
-
-        if "fastapi" in framework.lower():
-            return '''#!/usr/bin/env python3
-"""
-Main API module.
-"""
-
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
-
-
-app = FastAPI(
-    title="API",
-    description="Generated API with JWT authentication",
-    version="1.0.0"
-)
-
-security = HTTPBearer()
-
-
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {"message": "API is running", "status": "ok"}
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
-
-
-# Add your endpoints here
-'''
+    def _create_support_files(self, project_dir: Path, spec: Dict[str, object]) -> List[str]:
+        files: List[str] = []
+        requirements = project_dir / "requirements.txt"
+        dependencies = spec.get("dependencies", [])
+        if dependencies:
+            requirements.write_text("\n".join(sorted(set(dependencies))) + "\n", encoding="utf-8")
         else:
-            return '''#!/usr/bin/env python3
-"""
-Main API module.
-"""
+            requirements.write_text("requests\n", encoding="utf-8")
+        files.append(str(requirements.relative_to(project_dir)))
 
-def main():
-    """Main entry point."""
-    print("API starting...")
-    # Add your API logic here
-    pass
-
-
-if __name__ == "__main__":
-    main()
-'''
-
-    def _generate_model_module(self, module_name: str, architecture: Architecture) -> str:
-        """Genera módulo de modelos de base de datos."""
-        return '''#!/usr/bin/env python3
-"""
-Database models.
-"""
-
-from datetime import datetime
-from typing import Optional
-
-
-class BaseModel:
-    """Base model with common fields."""
-
-    def __init__(self):
-        self.id: Optional[int] = None
-        self.created_at: datetime = datetime.now()
-        self.updated_at: datetime = datetime.now()
-
-    def to_dict(self):
-        """Convert model to dictionary."""
-        return {
-            "id": self.id,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None
-        }
-
-
-# Add your models here
-'''
-
-    def _generate_config_module(self, module_name: str, architecture: Architecture) -> str:
-        """Genera módulo de configuración."""
-        return '''#!/usr/bin/env python3
-"""
-Configuration module.
-"""
-
-import os
-from typing import Any
-
-
-class Config:
-    """Application configuration."""
-
-    # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./app.db")
-
-    # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "change-this-in-production")
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-
-    # API
-    API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
-    API_PORT: int = int(os.getenv("API_PORT", "8000"))
-    DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
-
-    @classmethod
-    def get(cls, key: str, default: Any = None) -> Any:
-        """Get configuration value."""
-        return getattr(cls, key, default)
-
-
-config = Config()
-'''
-
-    def _generate_generic_module(self, module_name: str, architecture: Architecture) -> str:
-        """Genera módulo genérico."""
-        class_name = module_name.replace(".py", "").replace("_", " ").title().replace(" ", "")
-
-        return f'''#!/usr/bin/env python3
-"""
-{module_name} - Generated module.
-"""
-
-from typing import Optional, Dict, Any
-
-
-class {class_name}:
-    """
-    {class_name} class.
-
-    TODO: Implement functionality
-    """
-
-    def __init__(self):
-        """Initialize {class_name}."""
-        pass
-
-    def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process data.
-
-        Args:
-            data: Input data
-
-        Returns:
-            Processed data
-        """
-        # TODO: Implement processing logic
-        return data
-
-
-def main():
-    """Main entry point."""
-    instance = {class_name}()
-    print(f"{{instance.__class__.__name__}} initialized")
-
-
-if __name__ == "__main__":
-    main()
-'''
-
-    def _generate_config_files(self, project_dir: Path, architecture: Architecture) -> List[str]:
-        """Genera archivos de configuración."""
-        files = []
-
-        # .env.example
-        env_example = project_dir / ".env.example"
-        with open(env_example, "w") as f:
-            f.write("""# Database
-DATABASE_URL=sqlite:///./app.db
-
-# Security
-SECRET_KEY=change-this-in-production
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# API
-API_HOST=0.0.0.0
-API_PORT=8000
-DEBUG=False
-""")
-        files.append(str(env_example.relative_to(project_dir)))
-
-        # .gitignore
-        gitignore = project_dir / ".gitignore"
-        with open(gitignore, "w") as f:
-            f.write("""__pycache__/
-*.py[cod]
-*$py.class
-.env
-.venv
-venv/
-*.db
-*.log
-.DS_Store
-""")
-        files.append(str(gitignore.relative_to(project_dir)))
-
+        readme = project_dir / "README.md"
+        readme_content = self._render_readme(spec)
+        readme.write_text(readme_content, encoding="utf-8")
+        files.append(str(readme.relative_to(project_dir)))
         return files
 
-    def _generate_readme(self, project_dir: Path, architecture: Architecture) -> Optional[Path]:
-        """Genera README.md."""
-        readme_path = project_dir / "README.md"
+    def _render_readme(self, spec: Dict[str, object]) -> str:
+        modules = spec.get("modules", [])
+        module_list = "\n".join(f"- {self._normalize_module(module)['name']}" for module in modules)
+        dependencies = spec.get("dependencies", [])
+        dependencies_list = "\n".join(f"- {dep}" for dep in dependencies)
+        return f"""# {spec.get('project_type', 'Proyecto generado')}
 
-        modules_list = "\n".join([f"- {m}" for m in architecture.proposed_modules])
-        tech_list = "\n".join([f"- **{k}**: {v}" for k, v in architecture.technologies.items()])
+## Arquitectura
+{spec.get('architecture', 'No especificada')}
 
-        content = f"""# {project_dir.name}
+## Flujo de Datos
+{spec.get('data_flow', 'No disponible')}
 
-Generated by Discovery Motor V10
+## Módulos
+{module_list or '- Sin módulos definidos'}
 
-## Architecture
-
-### Modules
-{modules_list}
-
-### Technologies
-{tech_list}
-
-## Analysis
-
-{architecture.analysis}
-
-## Setup
-
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Configure environment:
-```bash
-cp .env.example .env
-# Edit .env with your settings
-```
-
-3. Run the application:
-```bash
-python src/main_api.py
-```
-
-## Project Structure
-
-```
-{project_dir.name}/
-├── src/           # Source code
-├── tests/         # Test files
-├── docs/          # Documentation
-├── config/        # Configuration files
-└── README.md      # This file
-```
-
-## Development
-
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+## Dependencias
+{dependencies_list or '- requests'}
 """
 
-        with open(readme_path, "w", encoding="utf-8") as f:
-            f.write(content)
+    def _prepare_project_dir(self, project_path: Optional[str], objective: Optional[str]) -> Path:
+        if project_path:
+            path = Path(project_path)
+            ensure_directory(path)
+            return path
+        slug = "_".join((objective or "proyecto").lower().split())
+        final_dir = self.project_root / slug
+        counter = 1
+        while final_dir.exists():
+            counter += 1
+            final_dir = self.project_root / f"{slug}_{counter}"
+        ensure_directory(final_dir)
+        return final_dir
 
-        return readme_path
+    def _normalize_module(self, module_entry: object) -> Dict[str, object]:
+        if isinstance(module_entry, dict) and "name" in module_entry:
+            return module_entry
+        if isinstance(module_entry, str):
+            return {"name": module_entry}
+        raise ValueError(f"Formato de módulo desconocido: {module_entry}")
 
-    def _generate_requirements(self, project_dir: Path, architecture: Architecture) -> Optional[Path]:
-        """Genera requirements.txt."""
-        req_path = project_dir / "requirements.txt"
-
-        framework = architecture.technologies.get("framework", "").lower()
-
-        requirements = []
-
-        if "fastapi" in framework:
-            requirements.extend([
-                "fastapi>=0.104.0",
-                "uvicorn[standard]>=0.24.0",
-                "pydantic>=2.5.0"
-            ])
-
-        if "jwt" in str(architecture.technologies).lower():
-            requirements.append("pyjwt>=2.8.0")
-            requirements.append("bcrypt>=4.1.0")
-
-        if "pytest" in str(architecture.technologies).lower():
-            requirements.append("pytest>=7.4.0")
-
-        # Agregar dependencias comunes
-        requirements.extend([
-            "python-dotenv>=1.0.0",
-            "requests>=2.31.0"
-        ])
-
-        with open(req_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(sorted(set(requirements))) + "\n")
-
-        return req_path
-
-    def get_metrics(self) -> Dict[str, Any]:
-        """Retorna métricas del agente."""
-        return {
-            "dev_agent": self.logger.get_metrics(),
-            "workspace": str(self.workspace.absolute())
-        }
-
-
-def main():
-    """Test del Dev Agent V10."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Dev Agent V10 - Code Generation")
-    parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Run test with sample architecture"
-    )
-    parser.add_argument(
-        "--architecture",
-        type=str,
-        help="Path to architecture JSON file"
-    )
-
-    args = parser.parse_args()
-
-    if args.test:
-        # Test con arquitectura de ejemplo
-        print("\n[TEST MODE] Using sample architecture\n")
-
-        sample_arch = Architecture(
-            proposed_modules=[
-                "auth_service.py",
-                "main_api.py",
-                "database_models.py",
-                "config.py"
-            ],
-            database_schema={
-                "users": {
-                    "id": "INTEGER PRIMARY KEY",
-                    "email": "TEXT UNIQUE NOT NULL",
-                    "password_hash": "TEXT NOT NULL"
-                }
-            },
-            technologies={
-                "framework": "FastAPI",
-                "database": "SQLite",
-                "auth": "JWT",
-                "testing": "pytest"
-            },
-            analysis="Simple REST API with JWT authentication",
-            reasoning="FastAPI provides automatic validation and documentation"
+    def _reply(self, message, payload: Dict[str, object]) -> None:
+        self.message_bus.send(
+            sender=self.AGENT_NAME,
+            recipient=message.sender,
+            payload=payload,
+            conversation_id=message.conversation_id,
+            in_reply_to=message.message_id,
         )
-
-        agent = DevAgentV10()
-        implementation = agent.generate_project(sample_arch, "test_project")
-
-        if implementation:
-            print("\n[SUCCESS] Project generated!\n")
-            print(f"Directory: {implementation.project_dir}")
-            print(f"Files: {implementation.files_count}")
-            print("\nFiles created:")
-            for file in implementation.files_created:
-                print(f"  - {file}")
-
-            agent.logger.print_summary()
-            sys.exit(0)
-        else:
-            print("\n[FAILED] Project generation failed")
-            agent.logger.print_summary()
-            sys.exit(1)
-
-    elif args.architecture:
-        # Cargar arquitectura desde archivo
-        with open(args.architecture, "r") as f:
-            arch_data = json.load(f)
-
-        architecture = Architecture(**arch_data)
-
-        agent = DevAgentV10()
-        implementation = agent.generate_project(architecture)
-
-        if implementation:
-            print(f"\n[SUCCESS] Project: {implementation.project_dir}\n")
-            sys.exit(0)
-        else:
-            print("\n[FAILED]\n")
-            sys.exit(1)
-
-    else:
-        parser.print_help()
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

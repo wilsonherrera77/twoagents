@@ -1,209 +1,150 @@
-"""Product Manager agent for the autonomous V10 system."""
+"""PM Agent V10 - Analiza objetivos usando el servicio LLM local."""
 
 from __future__ import annotations
 
+import json
 import threading
-from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, Optional
+
+import requests
 
 from V10.core.message_bus import FileMessageBus
-from V10.protocols import Architecture
 from V10.utils import create_logger
 
 
-@dataclass
-class ArchitectureTemplate:
-    name: str
-    keywords: List[str]
-    modules: List[str]
-    technologies: Dict[str, str]
-
-
-TEMPLATES: List[ArchitectureTemplate] = [
-    ArchitectureTemplate(
-        name="web_api",
-        keywords=["api", "service", "backend", "rest", "graphql"],
-        modules=[
-            "main_api.py",
-            "auth_service.py",
-            "database_models.py",
-            "config.py",
-            "schemas.py",
-            "tests/test_api.py",
-        ],
-        technologies={
-            "framework": "FastAPI",
-            "database": "PostgreSQL",
-            "orm": "SQLAlchemy",
-            "auth": "JWT",
-            "testing": "pytest",
-            "documentation": "OpenAPI",
-        },
-    ),
-    ArchitectureTemplate(
-        name="data_pipeline",
-        keywords=["pipeline", "etl", "batch", "data"],
-        modules=[
-            "ingestion.py",
-            "transformations.py",
-            "orchestrator.py",
-            "storage.py",
-            "config.py",
-            "tests/test_pipeline.py",
-        ],
-        technologies={
-            "framework": "Prefect",
-            "database": "BigQuery",
-            "storage": "GCS",
-            "scheduler": "Prefect Cloud",
-            "testing": "pytest",
-            "monitoring": "Prometheus",
-        },
-    ),
-    ArchitectureTemplate(
-        name="analytics_dashboard",
-        keywords=["dashboard", "analytics", "insights", "report", "visualization"],
-        modules=[
-            "app.py",
-            "data_access.py",
-            "metrics.py",
-            "auth.py",
-            "config.py",
-            "tests/test_dashboard.py",
-        ],
-        technologies={
-            "framework": "Streamlit",
-            "database": "Snowflake",
-            "auth": "Auth0",
-            "testing": "pytest",
-            "monitoring": "Sentry",
-            "ci": "GitHub Actions",
-        },
-    ),
-]
-
-
 class PMAgentV10:
-    """Deterministic yet robust PM agent that generates architectures."""
+    """Agente de gestión de producto que delega el análisis a un LLM externo."""
 
-    def __init__(self) -> None:
+    AGENT_NAME = "pm_agent"
+
+    def __init__(
+        self,
+        message_bus: FileMessageBus,
+        llm_endpoint: str = "http://localhost:5000/analyze",
+    ) -> None:
+        self.message_bus = message_bus
+        self.llm_endpoint = llm_endpoint
         self.logger = create_logger("PM_AGENT")
-        self.logger.set_state("INITIALIZED")
-
-    def propose_architecture(self, objective: str) -> Architecture:
-        template = self._select_template(objective)
-        modules = list(dict.fromkeys(template.modules))
-        technologies = dict(template.technologies)
-        analysis = self._build_analysis(objective, template)
-        reasoning = self._build_reasoning(modules)
-        database_schema = self._build_schema(modules)
-        architecture = Architecture(
-            proposed_modules=modules,
-            database_schema=database_schema,
-            technologies=technologies,
-            analysis=analysis,
-            reasoning=reasoning,
-        )
-        self.logger.success("Architecture created", {
-            "modules": len(modules),
-            "template": template.name,
-        })
-        return architecture
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------
-    # Template helpers
+    # Ciclo de vida
     # ------------------------------------------------------------------
-    def _select_template(self, objective: str) -> ArchitectureTemplate:
-        objective_lower = objective.lower()
-        for template in TEMPLATES:
-            if any(keyword in objective_lower for keyword in template.keywords):
-                self.logger.info("Selected template", {"template": template.name})
-                return template
-        self.logger.info("Falling back to web_api template")
-        return TEMPLATES[0]
+    def start(self) -> threading.Thread:
+        """Inicia el worker en un hilo independiente."""
 
-    def _build_analysis(self, objective: str, template: ArchitectureTemplate) -> str:
-        return (
-            f"The project '{objective}' is best served by the {template.name} template, "
-            f"which balances modularity and scalability. The proposed stack emphasises "
-            f"infrastructure-as-code, observability, and continuous delivery to ensure "
-            f"the system can evolve safely over time."
-        )
+        if self.thread and self.thread.is_alive():
+            return self.thread
+        self.running = True
+        self.thread = threading.Thread(target=self.run, name="PMAgentV10", daemon=True)
+        self.thread.start()
+        self.logger.set_state("RUNNING")
+        return self.thread
 
-    def _build_reasoning(self, modules: List[str]) -> str:
-        ordered = ", ".join(modules)
-        return (
-            f"The modules {ordered} follow a separation-of-concerns strategy: "
-            f"interface layers remain isolated from business logic and persistence. "
-            f"Each module is independently testable, enabling incremental delivery."
-        )
+    def stop(self) -> None:
+        """Detiene el worker y espera su finalización."""
 
-    def _build_schema(self, modules: List[str]) -> Dict[str, Dict[str, str]]:
-        schema: Dict[str, Dict[str, str]] = {
-            "users": {
-                "id": "UUID PRIMARY KEY",
-                "email": "TEXT UNIQUE NOT NULL",
-                "hashed_password": "TEXT NOT NULL",
-                "created_at": "TIMESTAMP NOT NULL",
-            },
-            "audit_logs": {
-                "id": "UUID PRIMARY KEY",
-                "user_id": "UUID REFERENCES users(id)",
-                "action": "TEXT NOT NULL",
-                "created_at": "TIMESTAMP NOT NULL",
-            },
-        }
-        if any("analytics" in module for module in modules):
-            schema["metrics"] = {
-                "id": "UUID PRIMARY KEY",
-                "name": "TEXT NOT NULL",
-                "value": "NUMERIC",
-                "recorded_at": "TIMESTAMP NOT NULL",
-            }
-        return schema
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=2)
+            self.logger.info("PM agent detenido")
 
+    # ------------------------------------------------------------------
+    # Bucle principal
+    # ------------------------------------------------------------------
+    def run(self) -> None:
+        """Worker principal que procesa mensajes del bus."""
 
-def start_pm_worker(bus: FileMessageBus, poll_interval: float = 0.5) -> threading.Event:
-    """Launch a background worker that processes PM messages."""
-
-    stop_event = threading.Event()
-
-    def _run() -> None:
-        agent = PMAgentV10()
-        agent.logger.set_state("WAITING")
-        while not stop_event.is_set():
-            try:
-                message = bus.receive("pm", timeout=poll_interval, poll_interval=poll_interval)
-            except Exception as exc:  # pragma: no cover - filesystem errors
-                agent.logger.error("Message bus error", {"error": str(exc)})
-                continue
+        while self.running:
+            message = self.message_bus.receive(self.AGENT_NAME, timeout=1.0)
             if message is None:
                 continue
-            agent.logger.set_state("PROCESSING")
+
             objective = message.payload.get("objective", "")
-            try:
-                architecture = agent.propose_architecture(objective)
-                response_payload = {
-                    "status": "SUCCESS",
-                    "architecture": architecture.to_dict(),
-                }
-            except Exception as exc:  # pragma: no cover - safety net
-                agent.logger.error("Failed to create architecture", {"error": str(exc)})
-                response_payload = {
-                    "status": "ERROR",
-                    "error": str(exc),
-                }
-            bus.send(
-                sender="pm",
+            project_path = message.payload.get("project_path")
+
+            self.logger.info("Analizando objetivo", {"objective": objective})
+            spec = self._analyze_objective_with_llm(objective)
+
+            response_payload = {
+                "status": "SUCCESS",
+                "objective": objective,
+                "spec": spec,
+            }
+            if project_path:
+                response_payload["project_path"] = project_path
+
+            # Respuesta al solicitante original (normalmente el orquestador)
+            self.message_bus.send(
+                sender=self.AGENT_NAME,
                 recipient=message.sender,
                 payload=response_payload,
                 conversation_id=message.conversation_id,
                 in_reply_to=message.message_id,
             )
-            agent.logger.set_state("WAITING")
-        agent.logger.info("PM worker stopped")
 
-    thread = threading.Thread(target=_run, name="pm-worker", daemon=True)
-    thread.start()
-    stop_event.thread = thread  # type: ignore[attr-defined]
-    return stop_event
+            # Enviar especificaciones al Dev Agent
+            dev_payload = {
+                "from": self.AGENT_NAME,
+                "objective": objective,
+                "spec": spec,
+            }
+            if project_path:
+                dev_payload["project_path"] = project_path
+
+            self.message_bus.send(
+                sender=self.AGENT_NAME,
+                recipient="dev_agent",
+                payload=dev_payload,
+                conversation_id=message.conversation_id,
+            )
+
+            self.logger.info("📤 Especificaciones enviadas a dev_agent")
+
+    # ------------------------------------------------------------------
+    # Lógica de negocio
+    # ------------------------------------------------------------------
+    def _analyze_objective_with_llm(self, objective: str) -> Dict:
+        """Analiza el objetivo usando el servicio LLM vía HTTP local."""
+
+        prompt = f"""Analiza este objetivo de proyecto y genera especificaciones técnicas:
+
+OBJETIVO: {objective}
+
+Genera un JSON estructurado con:
+- project_type: tipo de proyecto inferido (string)
+- modules: lista de módulos necesarios con nombres descriptivos (list)
+- dependencies: librerías Python requeridas (list)
+- architecture: descripción breve de arquitectura (string)
+- data_flow: flujo de datos entre componentes (string)
+
+IMPORTANTE: Responde ÚNICAMENTE con JSON válido, sin markdown ni explicaciones.
+"""
+
+        try:
+            response = requests.post(
+                self.llm_endpoint,
+                json={"prompt": prompt},
+                timeout=30,
+            )
+            response.raise_for_status()
+            result = response.json()
+            spec = json.loads(result["response"])
+            self.logger.success("Especificaciones generadas", {"objective": objective})
+            return spec
+        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            self.logger.error("Error obteniendo especificaciones", {"error": str(exc)})
+            return self._fallback_spec(objective)
+
+    def _fallback_spec(self, objective: str) -> Dict:
+        """Fallback básico si el servicio LLM no está disponible."""
+
+        self.logger.warn("Usando especificaciones por defecto", {"objective": objective})
+        return {
+            "project_type": "generic_python_project",
+            "modules": ["main", "utils"],
+            "dependencies": ["requests"],
+            "architecture": "Arquitectura básica - Servicio LLM no disponible",
+            "data_flow": "main → utils",
+        }
