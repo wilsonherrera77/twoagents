@@ -1,5 +1,0 @@
-{
-  "objective": "construir un sistema de scraping web+social multiagente y multinube con planificaci\u00f3n por refuerzo y optimizaci\u00f3n multiobjetivo (cobertura, frescura, costo, cumplimiento), que integre un simulador de cambios de sitios (chaos engineering para HTML/JS/API), render distribuido con Playwright, y extractores neuro-simb\u00f3licos (DSL de selecci\u00f3n + LLM con decoding restringido) capaces de autorrepararse ante \u201clayout drift\u201d; metas: \u22655M p\u00e1ginas/d\u00eda y \u22658 plataformas sociales v\u00eda APIs oficiales, p95<1.5 s en fetch est\u00e1tico y <4 s en SPA, F1 de extracci\u00f3n \u22650.93 en 20 verticales, disponibilidad \u226599.95% y recuperaci\u00f3n ante fallos <2 min.",
-  "timestamp": "2025-10-13T12:40:13.104091",
-  "orchestrator": "orchestrator"
-}

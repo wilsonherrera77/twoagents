@@ -12,16 +12,16 @@ Análisis SIN LLM:
 - Score automático
 """
 
-import re
 import sys
+
+import re
 import ast
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import create_logger
-from protocols_v10 import ValidationResult
+from V10.utils import create_logger
+from V10.protocols import ValidationResult
 
 
 class QAAgentV10:

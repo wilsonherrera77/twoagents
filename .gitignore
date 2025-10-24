@@ -1,4 +1,4 @@
-# Python
+# Python build artifacts
 __pycache__/
 *.py[cod]
 *$py.class
@@ -27,8 +27,9 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
 
-# IDE
+# Editors
 .vscode/
 .idea/
 *.swp
@@ -40,59 +41,35 @@ venv.bak/
 Thumbs.db
 desktop.ini
 
-# Project specific - Workspaces and temporary files
-autonomous_workspace/
-dev_workspace/
-test_workspace/
-test_calc/
-test_comm_workspace/
-test_output/
-test_output_directory/
+# Logs and reports
+*.log
+logs/
+results/
+reports/
 
-# Generated projects (keep only as examples, not all)
-generated_project*/
-
-# Temporary and obsolete files
+# Temporary files
 *.tmp
 *.bak
 *.old
 *_backup*
 *_old*
 *_temp*
-nul
 
-# Logs
-*.log
-logs/
+# Generated content
+V10/runtime/
+autonomous_workspace/
+dev_workspace/
+test_workspace/
+test_output/
+test_output_directory/
 
-# Results and reports
-results/
-reports/
+# Example projects generated during experiments
+generated_project*/
 
-# Data files
+# Data exports
 *.xlsx
 *.csv
-mi_mision_personalizada.csv
 
-# Test files (keep only essential ones)
+# Tests (keep only curated ones)
 test_*.py
 !test_main.py
-
-# Obsolete directories (original motors)
-AgentA_Frontend/
-AgentB_Backend/
-scraping_autonoma/
-
-# Keep these essential files:
-# autonomous_team_system.py
-# developer_agent.py
-# project_manager_agent.py
-# web_interface.py
-# autonomous_cli.py
-# message_contracts_v2.py
-# global_system_prompt.py
-# agent_communication.py
-# role_assignment.py
-# fix_unicode_aggressive.py
-# README.md
-# launch.bat

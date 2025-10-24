@@ -18,6 +18,7 @@ Modo Híbrido:
 """
 
 import sys
+
 import ast
 import json
 from pathlib import Path
@@ -25,9 +26,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 # Imports de infraestructura V10
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import create_logger
-from protocols_v10 import Architecture, Implementation
+from V10.utils import create_logger
+from V10.protocols import Architecture, Implementation
 
 
 class DevAgentV10:
@@ -190,6 +190,7 @@ class DevAgentV10:
 
         # Escribir archivo
         file_path = project_dir / "src" / module_name
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(code)
 
