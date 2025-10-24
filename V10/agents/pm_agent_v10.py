@@ -1,412 +1,209 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-PM Agent V10 - Product Manager con Claude CLI directo
-======================================================
+"""Product Manager agent for the autonomous V10 system."""
 
-CAMBIO CLAVE vs V8:
-- V8: File Communicator (espera humano) → BLOQUEADO POR SIEMPRE
-- V10: Claude CLI directo via subprocess → 100% AUTONOMO
+from __future__ import annotations
 
-Características:
-- Análisis de objetivos con Claude CLI
-- Propuesta de arquitectura empresarial
-- Validación de respuestas JSON
-- Logging completo de cada operación
-- Retry automático en fallos
-"""
+import threading
+from dataclasses import dataclass
+from typing import Dict, List
 
-import sys
-import json
-from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict, Any, List
+from V10.core.message_bus import FileMessageBus
+from V10.protocols import Architecture
+from V10.utils import create_logger
 
-# Imports de infraestructura V10
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import create_logger, ClaudeCLIWrapper
-from protocols_v10 import Architecture
+
+@dataclass
+class ArchitectureTemplate:
+    name: str
+    keywords: List[str]
+    modules: List[str]
+    technologies: Dict[str, str]
+
+
+TEMPLATES: List[ArchitectureTemplate] = [
+    ArchitectureTemplate(
+        name="web_api",
+        keywords=["api", "service", "backend", "rest", "graphql"],
+        modules=[
+            "main_api.py",
+            "auth_service.py",
+            "database_models.py",
+            "config.py",
+            "schemas.py",
+            "tests/test_api.py",
+        ],
+        technologies={
+            "framework": "FastAPI",
+            "database": "PostgreSQL",
+            "orm": "SQLAlchemy",
+            "auth": "JWT",
+            "testing": "pytest",
+            "documentation": "OpenAPI",
+        },
+    ),
+    ArchitectureTemplate(
+        name="data_pipeline",
+        keywords=["pipeline", "etl", "batch", "data"],
+        modules=[
+            "ingestion.py",
+            "transformations.py",
+            "orchestrator.py",
+            "storage.py",
+            "config.py",
+            "tests/test_pipeline.py",
+        ],
+        technologies={
+            "framework": "Prefect",
+            "database": "BigQuery",
+            "storage": "GCS",
+            "scheduler": "Prefect Cloud",
+            "testing": "pytest",
+            "monitoring": "Prometheus",
+        },
+    ),
+    ArchitectureTemplate(
+        name="analytics_dashboard",
+        keywords=["dashboard", "analytics", "insights", "report", "visualization"],
+        modules=[
+            "app.py",
+            "data_access.py",
+            "metrics.py",
+            "auth.py",
+            "config.py",
+            "tests/test_dashboard.py",
+        ],
+        technologies={
+            "framework": "Streamlit",
+            "database": "Snowflake",
+            "auth": "Auth0",
+            "testing": "pytest",
+            "monitoring": "Sentry",
+            "ci": "GitHub Actions",
+        },
+    ),
+]
 
 
 class PMAgentV10:
-    """
-    Product Manager Agent V10 - 100% Autónomo con Claude CLI.
+    """Deterministic yet robust PM agent that generates architectures."""
 
-    Responsabilidades:
-    1. Analizar objetivo del usuario
-    2. Proponer arquitectura de módulos
-    3. Definir esquema de base de datos
-    4. Seleccionar tecnologías apropiadas
-    5. Documentar razonamiento técnico
-    """
-
-    def __init__(self, timeout: int = 300):
-        """
-        Inicializa PM Agent V10.
-
-        Args:
-            timeout: Timeout para Claude CLI en segundos (default: 5 min)
-        """
-        self.logger = create_logger("PM_AGENT_V10")
-        self.claude = ClaudeCLIWrapper(logger=self.logger, timeout=timeout)
-
+    def __init__(self) -> None:
+        self.logger = create_logger("PM_AGENT")
         self.logger.set_state("INITIALIZED")
-        self.logger.info("PM Agent V10 initialized")
-        self.logger.info(f"Claude CLI timeout: {timeout}s")
 
-    def propose_architecture(self, objective: str) -> Optional[Architecture]:
-        """
-        Propone arquitectura completa para el objetivo.
+    def propose_architecture(self, objective: str) -> Architecture:
+        template = self._select_template(objective)
+        modules = list(dict.fromkeys(template.modules))
+        technologies = dict(template.technologies)
+        analysis = self._build_analysis(objective, template)
+        reasoning = self._build_reasoning(modules)
+        database_schema = self._build_schema(modules)
+        architecture = Architecture(
+            proposed_modules=modules,
+            database_schema=database_schema,
+            technologies=technologies,
+            analysis=analysis,
+            reasoning=reasoning,
+        )
+        self.logger.success("Architecture created", {
+            "modules": len(modules),
+            "template": template.name,
+        })
+        return architecture
 
-        Args:
-            objective: Descripción del proyecto a crear
+    # ------------------------------------------------------------------
+    # Template helpers
+    # ------------------------------------------------------------------
+    def _select_template(self, objective: str) -> ArchitectureTemplate:
+        objective_lower = objective.lower()
+        for template in TEMPLATES:
+            if any(keyword in objective_lower for keyword in template.keywords):
+                self.logger.info("Selected template", {"template": template.name})
+                return template
+        self.logger.info("Falling back to web_api template")
+        return TEMPLATES[0]
 
-        Returns:
-            Architecture object si exitoso, None si falla
-        """
-        self.logger.set_state("ANALYZING")
-        self.logger.set_task(f"Analyzing objective: {objective[:50]}...")
-
-        start_time = datetime.now()
-
-        # Construir prompt empresarial
-        prompt = self._build_architecture_prompt(objective)
-
-        self.logger.info(
-            "Requesting architecture from Claude",
-            {"prompt_length": len(prompt), "objective_preview": objective[:100]}
+    def _build_analysis(self, objective: str, template: ArchitectureTemplate) -> str:
+        return (
+            f"The project '{objective}' is best served by the {template.name} template, "
+            f"which balances modularity and scalability. The proposed stack emphasises "
+            f"infrastructure-as-code, observability, and continuous delivery to ensure "
+            f"the system can evolve safely over time."
         )
 
-        # Ejecutar Claude CLI con retry
-        result = self.claude.execute_with_retry(
-            prompt=prompt,
-            max_retries=3,
-            expect_json=True
+    def _build_reasoning(self, modules: List[str]) -> str:
+        ordered = ", ".join(modules)
+        return (
+            f"The modules {ordered} follow a separation-of-concerns strategy: "
+            f"interface layers remain isolated from business logic and persistence. "
+            f"Each module is independently testable, enabling incremental delivery."
         )
 
-        duration = self.logger.measure_time("Architecture generation", start_time)
-
-        if not result.success:
-            self.logger.error(
-                "Failed to generate architecture",
-                {"error": result.error, "duration": duration}
-            )
-            self.logger.set_state("FAILED")
-            return None
-
-        # Validar respuesta
-        try:
-            architecture = self._validate_and_parse_response(result.response)
-
-            if architecture:
-                self.logger.success(
-                    "Architecture generated successfully",
-                    {
-                        "modules_count": len(architecture.proposed_modules),
-                        "technologies": list(architecture.technologies.keys()),
-                        "duration": duration
-                    }
-                )
-                self.logger.set_state("SUCCESS")
-                return architecture
-            else:
-                self.logger.error("Architecture validation failed")
-                self.logger.set_state("FAILED")
-                return None
-
-        except Exception as e:
-            self.logger.error(
-                "Exception during architecture parsing",
-                {"error": str(e), "type": type(e).__name__}
-            )
-            self.logger.set_state("FAILED")
-            return None
-
-    def _build_architecture_prompt(self, objective: str) -> str:
-        """
-        Construye prompt detallado para Claude.
-
-        Este prompt incluye:
-        - Objetivo del usuario
-        - Requisitos empresariales estándar
-        - Formato de respuesta JSON esperado
-        - Ejemplos de buenas arquitecturas
-        """
-        prompt = f"""You are an expert Software Architect and Product Manager with 15+ years of experience designing enterprise-grade applications.
-
-USER OBJECTIVE:
-{objective}
-
-YOUR TASK:
-Analyze this objective and propose a complete, production-ready architecture.
-
-REQUIREMENTS:
-1. Propose 3-8 Python modules that implement the objective
-2. Design a database schema (tables, fields, relationships)
-3. Select appropriate technologies (framework, database, auth, etc.)
-4. Provide technical analysis explaining your decisions
-5. Include security, scalability, and maintainability considerations
-
-ENTERPRISE STANDARDS TO FOLLOW:
-- RESTful API design
-- JWT authentication for protected endpoints
-- Input validation and sanitization
-- Proper error handling and logging
-- Database transactions where needed
-- Environment-based configuration (.env)
-- Comprehensive testing strategy
-- API documentation (OpenAPI/Swagger)
-
-RESPONSE FORMAT (JSON):
-{{
-  "proposed_modules": [
-    "auth_service.py",
-    "user_management.py",
-    "main_api.py",
-    "database_models.py",
-    "config.py"
-  ],
-  "database_schema": {{
-    "users": {{
-      "id": "INTEGER PRIMARY KEY",
-      "email": "TEXT UNIQUE NOT NULL",
-      "password_hash": "TEXT NOT NULL",
-      "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    }},
-    "sessions": {{
-      "id": "INTEGER PRIMARY KEY",
-      "user_id": "INTEGER FOREIGN KEY REFERENCES users(id)",
-      "token": "TEXT UNIQUE NOT NULL",
-      "expires_at": "TIMESTAMP NOT NULL"
-    }}
-  }},
-  "technologies": {{
-    "framework": "FastAPI",
-    "database": "SQLite (dev) / PostgreSQL (prod)",
-    "auth": "JWT with PyJWT",
-    "validation": "Pydantic",
-    "testing": "pytest",
-    "documentation": "OpenAPI (built-in FastAPI)"
-  }},
-  "analysis": "This objective requires a RESTful API with user authentication. FastAPI provides automatic validation, async support, and built-in documentation. SQLite for development simplifies setup, while PostgreSQL is recommended for production. JWT tokens provide stateless authentication suitable for microservices.",
-  "reasoning": "The proposed modules follow separation of concerns: auth_service handles authentication logic, user_management handles CRUD operations, main_api coordinates endpoints, database_models defines ORM schemas, and config manages environment variables. This structure supports testing, scaling, and maintenance."
-}}
-
-IMPORTANT VALIDATION RULES:
-- proposed_modules MUST be a list of strings (Python filenames)
-- database_schema MUST be a dict of table definitions
-- technologies MUST specify framework, database, auth, validation, testing
-- analysis MUST explain WHY these choices (50-150 words)
-- reasoning MUST explain HOW modules work together (50-150 words)
-
-RETURN ONLY THE JSON OBJECT. NO MARKDOWN. NO EXPLANATIONS OUTSIDE JSON.
-"""
-        return prompt
-
-    def _validate_and_parse_response(self, response: Dict[str, Any]) -> Optional[Architecture]:
-        """
-        Valida que la respuesta de Claude tenga el formato correcto.
-
-        Args:
-            response: Respuesta JSON de Claude
-
-        Returns:
-            Architecture object si válido, None si inválido
-        """
-        required_keys = [
-            "proposed_modules",
-            "database_schema",
-            "technologies",
-            "analysis",
-            "reasoning"
-        ]
-
-        # Verificar que todas las keys existan
-        missing = [k for k in required_keys if k not in response]
-
-        if missing:
-            self.logger.error(
-                "Response missing required keys",
-                {"missing_keys": missing, "received_keys": list(response.keys())}
-            )
-            return None
-
-        # Validar tipos
-        if not isinstance(response["proposed_modules"], list):
-            self.logger.error("proposed_modules must be a list")
-            return None
-
-        if not isinstance(response["database_schema"], dict):
-            self.logger.error("database_schema must be a dict")
-            return None
-
-        if not isinstance(response["technologies"], dict):
-            self.logger.error("technologies must be a dict")
-            return None
-
-        # Validar que proposed_modules no esté vacío
-        if len(response["proposed_modules"]) < 3:
-            self.logger.error(
-                "Too few modules proposed",
-                {"count": len(response["proposed_modules"]), "minimum": 3}
-            )
-            return None
-
-        # Validar que technologies tenga keys importantes
-        required_techs = ["framework", "database"]
-        missing_techs = [k for k in required_techs if k not in response["technologies"]]
-
-        if missing_techs:
-            self.logger.warn(
-                "Technologies missing recommended keys",
-                {"missing": missing_techs}
-            )
-
-        # Crear Architecture object
-        try:
-            architecture = Architecture(
-                proposed_modules=response["proposed_modules"],
-                database_schema=response["database_schema"],
-                technologies=response["technologies"],
-                analysis=response["analysis"],
-                reasoning=response["reasoning"]
-            )
-
-            self.logger.success("Architecture validation passed")
-            return architecture
-
-        except Exception as e:
-            self.logger.error(
-                "Failed to create Architecture object",
-                {"error": str(e)}
-            )
-            return None
-
-    def save_architecture(self, architecture: Architecture, output_dir: Path) -> bool:
-        """
-        Guarda arquitectura en archivo JSON.
-
-        Args:
-            architecture: Architecture object
-            output_dir: Directorio donde guardar
-
-        Returns:
-            True si exitoso, False si falla
-        """
-        try:
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = output_dir / f"architecture_{timestamp}.json"
-
-            with open(filename, "w", encoding="utf-8") as f:
-                json.dump(architecture.to_dict(), f, indent=2)
-
-            self.logger.success(
-                "Architecture saved",
-                {"file": str(filename)}
-            )
-
-            return True
-
-        except Exception as e:
-            self.logger.error(
-                "Failed to save architecture",
-                {"error": str(e)}
-            )
-            return False
-
-    def get_metrics(self) -> Dict[str, Any]:
-        """Retorna métricas combinadas del agente y Claude."""
-        return {
-            "pm_agent": self.logger.get_metrics(),
-            "claude_cli": self.claude.get_metrics()
+    def _build_schema(self, modules: List[str]) -> Dict[str, Dict[str, str]]:
+        schema: Dict[str, Dict[str, str]] = {
+            "users": {
+                "id": "UUID PRIMARY KEY",
+                "email": "TEXT UNIQUE NOT NULL",
+                "hashed_password": "TEXT NOT NULL",
+                "created_at": "TIMESTAMP NOT NULL",
+            },
+            "audit_logs": {
+                "id": "UUID PRIMARY KEY",
+                "user_id": "UUID REFERENCES users(id)",
+                "action": "TEXT NOT NULL",
+                "created_at": "TIMESTAMP NOT NULL",
+            },
         }
+        if any("analytics" in module for module in modules):
+            schema["metrics"] = {
+                "id": "UUID PRIMARY KEY",
+                "name": "TEXT NOT NULL",
+                "value": "NUMERIC",
+                "recorded_at": "TIMESTAMP NOT NULL",
+            }
+        return schema
 
 
-def main():
-    """Test del PM Agent V10."""
-    import argparse
+def start_pm_worker(bus: FileMessageBus, poll_interval: float = 0.5) -> threading.Event:
+    """Launch a background worker that processes PM messages."""
 
-    parser = argparse.ArgumentParser(description="PM Agent V10 - Architecture Proposal")
-    parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Run test with simple objective"
-    )
-    parser.add_argument(
-        "--objective",
-        type=str,
-        help="Project objective to analyze"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default=".shared/pm_v10",
-        help="Output directory for architecture"
-    )
+    stop_event = threading.Event()
 
-    args = parser.parse_args()
+    def _run() -> None:
+        agent = PMAgentV10()
+        agent.logger.set_state("WAITING")
+        while not stop_event.is_set():
+            try:
+                message = bus.receive("pm", timeout=poll_interval, poll_interval=poll_interval)
+            except Exception as exc:  # pragma: no cover - filesystem errors
+                agent.logger.error("Message bus error", {"error": str(exc)})
+                continue
+            if message is None:
+                continue
+            agent.logger.set_state("PROCESSING")
+            objective = message.payload.get("objective", "")
+            try:
+                architecture = agent.propose_architecture(objective)
+                response_payload = {
+                    "status": "SUCCESS",
+                    "architecture": architecture.to_dict(),
+                }
+            except Exception as exc:  # pragma: no cover - safety net
+                agent.logger.error("Failed to create architecture", {"error": str(exc)})
+                response_payload = {
+                    "status": "ERROR",
+                    "error": str(exc),
+                }
+            bus.send(
+                sender="pm",
+                recipient=message.sender,
+                payload=response_payload,
+                conversation_id=message.conversation_id,
+                in_reply_to=message.message_id,
+            )
+            agent.logger.set_state("WAITING")
+        agent.logger.info("PM worker stopped")
 
-    # Determinar objetivo
-    if args.test:
-        objective = "Create a simple REST API for task management with JWT authentication. Users should be able to create, read, update, and delete tasks. Each task has a title, description, status, and due date."
-        print("\n[TEST MODE] Using test objective:")
-        print(f"  {objective}\n")
-    elif args.objective:
-        objective = args.objective
-    else:
-        print("[ERROR] Please provide --test or --objective")
-        sys.exit(1)
-
-    # Crear agente
-    print("[INIT] Creating PM Agent V10...")
-    agent = PMAgentV10(timeout=300)
-
-    # Proponer arquitectura
-    print(f"\n[ANALYZING] Objective: {objective[:80]}...\n")
-    architecture = agent.propose_architecture(objective)
-
-    if architecture:
-        print("\n[SUCCESS] Architecture generated!\n")
-        print(f"Modules ({len(architecture.proposed_modules)}):")
-        for module in architecture.proposed_modules:
-            print(f"  - {module}")
-
-        print(f"\nTechnologies:")
-        for tech, value in architecture.technologies.items():
-            print(f"  - {tech}: {value}")
-
-        print(f"\nDatabase Tables: {len(architecture.database_schema)}")
-        for table in architecture.database_schema.keys():
-            print(f"  - {table}")
-
-        # Guardar
-        output_dir = Path(args.output)
-        if agent.save_architecture(architecture, output_dir):
-            print(f"\n[SAVED] Architecture saved to {output_dir}")
-
-        # Métricas
-        metrics = agent.get_metrics()
-        print(f"\n[METRICS]")
-        print(f"  Claude executions: {metrics['claude_cli']['total_executions']}")
-        print(f"  Total duration: {metrics['claude_cli']['total_duration_seconds']}s")
-        print(f"  Agent events: {sum(metrics['pm_agent']['event_counts'].values())}")
-
-        # Summary
-        agent.logger.print_summary()
-
-        print("\n[OK] PM Agent V10 test completed successfully!")
-        sys.exit(0)
-    else:
-        print("\n[FAILED] Architecture generation failed")
-
-        # Summary
-        agent.logger.print_summary()
-
-        print("\n[ERROR] PM Agent V10 test failed!")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+    thread = threading.Thread(target=_run, name="pm-worker", daemon=True)
+    thread.start()
+    stop_event.thread = thread  # type: ignore[attr-defined]
+    return stop_event

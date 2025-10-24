@@ -1,5 +1,0 @@
-{
-  "objective": "Objetivo 2 (intermedio): agentes diseñan y despliegan un microservicio REST para predicción de series temporales (entrenamiento automático con validación cruzada, endpoint /predict y /explain con SHAP aproximado), con contrato OpenAPI, CI que ejecuta pruebas de carga (≥1k rps, p95 <150 ms), canary release y rollback automático; éxito si reproducen un MAE ≤ el baseline naïve en ≥3 datasets públicos y el Auditor certifica trazabilidad end-to-end",
-  "complexity": "ENTERPRISE",
-  "started_at": "2025-10-11T13:29:39.415609"
-}
