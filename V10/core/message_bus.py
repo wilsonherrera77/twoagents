@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-from V10.utils import create_logger, get_agent_runtime_dir, get_runtime_root
+from V10.utils import create_logger, ensure_directory, get_runtime_root
 
 
 @dataclass
@@ -40,8 +40,7 @@ class FileMessageBus:
         self.logger = create_logger("MESSAGE_BUS")
         if base_dir is None:
             base_dir = get_runtime_root() / "agents"
-        self.base_dir = Path(base_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.base_dir = ensure_directory(Path(base_dir))
 
     # ------------------------------------------------------------------
     # Public API
@@ -117,7 +116,6 @@ class FileMessageBus:
     # Internal helpers
     # ------------------------------------------------------------------
     def _inbox_dir(self, agent_name: str) -> Path:
-        agent_dir = get_agent_runtime_dir(agent_name)
-        inbox = agent_dir / "inbox"
-        inbox.mkdir(parents=True, exist_ok=True)
+        agent_dir = ensure_directory(self.base_dir / agent_name)
+        inbox = ensure_directory(agent_dir / "inbox")
         return inbox
